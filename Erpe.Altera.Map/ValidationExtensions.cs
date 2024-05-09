@@ -33,7 +33,6 @@ public static class ValidationExtensions
 
         Point point = lineString.Factory.CreatePoint(lineString.GetCoordinateN(0));
         polygonizer.Add(lineString.Union(point));
-        return polygonizer.GetPolygons()
-            .Aggregate((Geometry)Polygon.Empty, (firstPolygon, secondPolygon) => firstPolygon.Union(secondPolygon));
+        return polygonizer.GetPolygons().MaxBy(polygon => polygon.Area) ?? Polygon.Empty;
     }
 }
