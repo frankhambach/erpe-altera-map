@@ -2,7 +2,7 @@
 // Copyright (c) Frank Hambach. All rights reserved.
 // </copyright>
 
-namespace Erpe.Altera.Map;
+namespace Erpe.Altera.Map.Services;
 
 using System;
 using System.Collections.Generic;
@@ -12,7 +12,7 @@ public static class EnumerableExtensions
 {
     public static IEnumerable<IEnumerable<T>> Chunk<T>(this IEnumerable<T> items, int size)
     {
-        using IEnumerator<T>? enumerator = items.GetEnumerator();
+        using IEnumerator<T> enumerator = items.GetEnumerator();
         bool hasNext = enumerator.MoveNext();
 
         IEnumerable<T> NextPartitionOf()

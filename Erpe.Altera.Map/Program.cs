@@ -5,8 +5,17 @@
 namespace Erpe.Altera.Map;
 
 using System.CommandLine;
-using System.IO;
 using System.Threading.Tasks;
+
+using Erpe.Altera.Map.Commands;
+using Erpe.Altera.Map.Contracts;
+using Erpe.Altera.Map.Services;
+
+using Microsoft.Extensions.DependencyInjection;
+
+using NetTopologySuite;
+using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Implementation;
 
 using Serilog;
 
@@ -21,20 +30,32 @@ internal static class Program
 
         try
         {
-            Option<FileInfo> inOption = new Option<FileInfo>("--in", "The SVG file to read country shapes from.");
-            Option<FileInfo> outOption = new Option<FileInfo>("--out", "The GeoJson file to write.");
+            ServiceCollection services = [];
 
-            Command convertCommand = new Command("convert", "Convert an SVG world map to GeoJson.")
-                {
-                    inOption,
-                    outOption,
-                };
-            convertCommand.SetHandler(
-                (inFile, outFile) => new ConvertCommand().HandleAsync(inFile, outFile),
-                inOption,
-                outOption);
+            NtsGeometryServices currentInstance = NtsGeometryServices.Instance;
+            NtsGeometryServices.Instance = new NtsGeometryServices(
+                CoordinateArraySequenceFactory.Instance,
+                currentInstance.DefaultPrecisionModel,
+                currentInstance.DefaultSRID,
+                GeometryOverlay.NG,
+                currentInstance.CoordinateEqualityComparer);
 
-            return await convertCommand.InvokeAsync(args);
+            services.AddSingleton(NtsGeometryServices.Instance.DefaultCoordinateSequenceFactory);
+            services.AddSingleton(NtsGeometryServices.Instance.CreateGeometryFactory());
+            services.AddTransient<ISvgApproximationService, SvgApproximationService>();
+            services.AddTransient<IProjectionService, WinkelTripelProjectionService>();
+            services.AddTransient<ITopologyService, TopologyService>();
+            services.AddTransient<Command, ConvertCommand>();
+
+            await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+
+            Command rootCommand = new RootCommand();
+            foreach (Command command in serviceProvider.GetServices<Command>())
+            {
+                rootCommand.AddCommand(command);
+            }
+
+            return await rootCommand.InvokeAsync(args);
         }
         finally
         {

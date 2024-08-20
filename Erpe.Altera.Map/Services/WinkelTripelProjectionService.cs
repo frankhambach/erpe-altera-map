@@ -1,19 +1,19 @@
-﻿// <copyright file="ProjectionExtensions.cs" company="Frank Hambach">
+﻿// <copyright file="WinkelTripelProjectionService.cs" company="Frank Hambach">
 // Copyright (c) Frank Hambach. All rights reserved.
 // </copyright>
 
-namespace Erpe.Altera.Map;
+namespace Erpe.Altera.Map.Services;
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
+
+using Erpe.Altera.Map.Contracts;
 
 using NetTopologySuite.Geometries;
 
 using Serilog;
 
-public static class ProjectionExtensions
+public class WinkelTripelProjectionService : IProjectionService
 {
     private const double Epsilon = 1e-12;
 
@@ -25,20 +25,34 @@ public static class ProjectionExtensions
         -Math.PI / 2,
         Math.PI / 2);
 
-    public static async Task<LinearRing[]> TransformAsync(
-        this IEnumerable<LinearRing> linearRings,
-        Envelope sourceEnvelope)
+    private readonly GeometryFactory geometryFactory;
+
+    public WinkelTripelProjectionService(GeometryFactory geometryFactory)
     {
-        return (await Task.WhenAll(
-                linearRings.Select(
-                    async (linearRing, linearRingIndex) => (
-                        LinearRing: await TransformLinearRingAsync(linearRing, sourceEnvelope), Index: linearRingIndex))))
-            .OrderBy(linearRing => linearRing.Index)
-            .Select(linearRing => linearRing.LinearRing)
-            .ToArray();
+        this.geometryFactory = geometryFactory;
     }
 
-    private static Coordinate FromWinkelTripel(Point point)
+    public LineString Unproject(CoordinateSequence coordinateSequence, Envelope sourceEnvelope)
+    {
+        return this.geometryFactory.CreateLineString(
+            Enumerable.Range(0, coordinateSequence.Count)
+                .Select(coordinateSequence.GetCoordinate)
+                .Select(coordinate => this.Unproject(Transform(coordinate, sourceEnvelope)))
+                .ToArray());
+    }
+
+    private static Coordinate Transform(Coordinate coordinate, Envelope sourceEnvelope)
+    {
+        double x = WinkelTripelEnvelope.MinX
+            + (((coordinate.X - sourceEnvelope.MinX) / (sourceEnvelope.MaxX - sourceEnvelope.MinX))
+                * (WinkelTripelEnvelope.MaxX - WinkelTripelEnvelope.MinX));
+        double y = -(WinkelTripelEnvelope.MinY
+            + (((coordinate.Y - sourceEnvelope.MinY) / (sourceEnvelope.MaxY - sourceEnvelope.MinY))
+                * (WinkelTripelEnvelope.MaxY - WinkelTripelEnvelope.MinY)));
+        return new Coordinate(x, y);
+    }
+
+    private Coordinate Unproject(Coordinate coordinate)
     {
         const double cosPhi1 = 2 / Math.PI;
 
@@ -50,13 +64,13 @@ public static class ProjectionExtensions
         double distanceX, distanceY;
         double derivativeXByLambda, derivativeYByLambda, derivativeXByPhi, derivativeYByPhi;
 
-        if ((Math.Abs(point.X) < Epsilon) && (Math.Abs(point.Y) < Epsilon))
+        if ((Math.Abs(coordinate.X) < Epsilon) && (Math.Abs(coordinate.Y) < Epsilon))
         {
             return new Coordinate(0.0, 0.0);
         }
 
-        double phi = point.Y;
-        double lambda = point.X;
+        double phi = coordinate.Y;
+        double lambda = coordinate.X;
 
         for (int index = 0; index < MaximumIterationCount; ++index)
         {
@@ -72,15 +86,15 @@ public static class ProjectionExtensions
 
             if (sinAlphaSquared == 0.0)
             {
-                Console.WriteLine("Error: Denominator is zero.");
+                Log.Error("Denominator is zero.");
                 return new Coordinate(lambda, phi);
             }
 
             x = 0.5 * (((2.0 * cosPhi * sinHalfLambda * alpha) / sinAlpha) + (lambda * cosPhi1));
             y = 0.5 * (((alpha * sinPhi) / sinAlpha) + phi);
 
-            distanceX = x - point.X;
-            distanceY = y - point.Y;
+            distanceX = x - coordinate.X;
+            distanceY = y - coordinate.Y;
             if ((Math.Abs(distanceX) < Epsilon) && (Math.Abs(distanceY) < Epsilon))
             {
                 if (phi > (Math.PI / 2.0))
@@ -124,32 +138,10 @@ public static class ProjectionExtensions
 
         Log.Warning(
             "Could not accurately determine coordinates for projected point {Point} after {IterationCount} iterations.",
-            point,
+            coordinate,
             MaximumIterationCount);
-        return new Coordinate((lambda / Math.PI) * 180.0, (phi / Math.PI) * 180.0);
-    }
-
-    private static Point NormalizeForWinkelTripel(Coordinate coordinate, Envelope sourceEnvelope)
-    {
-        return new Point(
-            WinkelTripelEnvelope.MinX
-            + (((coordinate.X - sourceEnvelope.MinX) / (sourceEnvelope.MaxX - sourceEnvelope.MinX))
-                * (WinkelTripelEnvelope.MaxX - WinkelTripelEnvelope.MinX)),
-            -(WinkelTripelEnvelope.MinY
-                + (((coordinate.Y - sourceEnvelope.MinY) / (sourceEnvelope.MaxY - sourceEnvelope.MinY))
-                    * (WinkelTripelEnvelope.MaxY - WinkelTripelEnvelope.MinY))));
-    }
-
-    private static Coordinate TransformCoordinate(Coordinate coordinate, Envelope sourceEnvelope)
-    {
-        return FromWinkelTripel(NormalizeForWinkelTripel(coordinate, sourceEnvelope));
-    }
-
-    private static Task<LinearRing> TransformLinearRingAsync(LinearRing linearRing, Envelope sourceEnvelope)
-    {
-        return Task.Run(
-            () => new LinearRing(
-                linearRing.Coordinates.Select(coordinate => TransformCoordinate(coordinate, sourceEnvelope))
-                    .ToArray()));
+        return new Coordinate(
+            this.geometryFactory.PrecisionModel.MakePrecise((lambda / Math.PI) * 180.0),
+            this.geometryFactory.PrecisionModel.MakePrecise((phi / Math.PI) * 180.0));
     }
 }
