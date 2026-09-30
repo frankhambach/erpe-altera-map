@@ -1,6 +1,5 @@
-﻿// <copyright file="SvgApproximationService.cs" company="Frank Hambach">
-// Copyright (c) Frank Hambach. All rights reserved.
-// </copyright>
+﻿// Copyright (c) Frank Hambach. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Services;
 
@@ -18,7 +17,7 @@ using Serilog;
 using Svg;
 using Svg.Pathing;
 
-public class SvgApproximationService : ISvgApproximationService
+public sealed class SvgApproximationService : ISvgApproximationService
 {
     private const double Tolerance = 0.01;
 
@@ -36,13 +35,17 @@ public class SvgApproximationService : ISvgApproximationService
                 SvgPath path => this.ApproximatePath(path),
                 SvgPolygon polygon => [this.ConvertPolygon(polygon)],
                 SvgRectangle rectangle => [this.ConvertRectangle(rectangle)],
-                _ => Enumerable.Empty<CoordinateSequence>(),
+                _ => [],
             };
     }
 
     public IEnumerable<Coordinate> GetCoordinates(SvgPath path)
     {
-        return ConvertToAbsolute(path).Select(pathSegment => pathSegment.End.ToCoordinate());
+        ArgumentNullException.ThrowIfNull(path);
+
+        return ConvertToAbsolute(path)
+            .Where(pathSegment => pathSegment is not SvgClosePathSegment)
+            .Select(pathSegment => pathSegment.End.ToCoordinate());
     }
 
     private static IEnumerable<Coordinate> ApproximateClosedPath(IList<SvgPathSegment> shape)
@@ -65,6 +68,16 @@ public class SvgApproximationService : ISvgApproximationService
                     }
 
                     break;
+                case SvgQuadraticCurveSegment quadraticCurveSegment:
+                    foreach (Coordinate point in ApproximateQuadraticBezier(
+                                 startPoint,
+                                 quadraticCurveSegment,
+                                 previousPathSegment as SvgQuadraticCurveSegment))
+                    {
+                        yield return point;
+                    }
+
+                    break;
                 case SvgClosePathSegment:
                     yield return firstPoint;
                     break;
@@ -76,6 +89,39 @@ public class SvgApproximationService : ISvgApproximationService
             startPoint = endPoint;
             previousPathSegment = pathSegment;
         }
+    }
+
+    private static IEnumerable<Coordinate> ApproximateQuadraticBezier(
+        Coordinate startPoint,
+        SvgQuadraticCurveSegment quadraticCurveSegment,
+        SvgQuadraticCurveSegment? previousQuadraticCurveSegment)
+    {
+        Coordinate controlPoint = quadraticCurveSegment.ControlPoint.ToCoordinate();
+        if (double.IsNaN(controlPoint.X) || double.IsNaN(controlPoint.Y))
+        {
+            controlPoint = previousQuadraticCurveSegment == null
+                ? startPoint
+                : Reflect(previousQuadraticCurveSegment.ControlPoint.ToCoordinate(), startPoint);
+        }
+
+        Coordinate endPoint = quadraticCurveSegment.End.ToCoordinate();
+        return ApproximateQuadraticBezier(startPoint, controlPoint, endPoint);
+    }
+
+    private static IEnumerable<Coordinate> ApproximateQuadraticBezier(
+        Coordinate startPoint,
+        Coordinate controlPoint,
+        Coordinate endPoint)
+    {
+        var firstControlPoint = new Coordinate(
+            startPoint.X + (2.0 / 3.0 * (controlPoint.X - startPoint.X)),
+            startPoint.Y + (2.0 / 3.0 * (controlPoint.Y - startPoint.Y)));
+
+        var secondControlPoint = new Coordinate(
+            endPoint.X + (2.0 / 3.0 * (controlPoint.X - endPoint.X)),
+            endPoint.Y + (2.0 / 3.0 * (controlPoint.Y - endPoint.Y)));
+
+        return ApproximateCubicBezier(startPoint, firstControlPoint, secondControlPoint, endPoint);
     }
 
     private static IEnumerable<Coordinate> ApproximateCubicBezier(
@@ -152,8 +198,7 @@ public class SvgApproximationService : ISvgApproximationService
             {
                 case SvgCubicCurveSegment cubicCurveSegment:
                     PointF firstControlPoint = cubicCurveSegment.FirstControlPoint;
-                    if (!float.IsNaN(cubicCurveSegment.FirstControlPoint.X)
-                        || !float.IsNaN(cubicCurveSegment.FirstControlPoint.Y))
+                    if (!float.IsNaN(firstControlPoint.X) || !float.IsNaN(firstControlPoint.Y))
                     {
                         firstControlPoint = ConvertToAbsolute(
                             cubicCurveSegment.FirstControlPoint,
@@ -169,6 +214,22 @@ public class SvgApproximationService : ISvgApproximationService
                                 cubicCurveSegment.SecondControlPoint,
                                 cubicCurveSegment.IsRelative,
                                 startPoint),
+                            endPoint));
+                    break;
+                case SvgQuadraticCurveSegment quadraticCurveSegment:
+                    PointF controlPoint = quadraticCurveSegment.ControlPoint;
+                    if (!float.IsNaN(controlPoint.X) || !float.IsNaN(controlPoint.Y))
+                    {
+                        controlPoint = ConvertToAbsolute(
+                            quadraticCurveSegment.ControlPoint,
+                            quadraticCurveSegment.IsRelative,
+                            startPoint);
+                    }
+
+                    result.Add(
+                        new SvgQuadraticCurveSegment(
+                            false,
+                            controlPoint,
                             endPoint));
                     break;
                 case SvgLineSegment:
@@ -258,7 +319,7 @@ public class SvgApproximationService : ISvgApproximationService
             .ChunkBy(pathSegment => pathSegment is SvgMoveToSegment)
             .Select(ApproximateClosedPath)
             .Select(points => points.ToArray())
-            .Where(coordinates => coordinates.Length >= 2)
+            .Where(coordinates => coordinates.Length >= 3)
             .Select(coordinates => this.coordinateSequenceFactory.Create(coordinates));
     }
 
