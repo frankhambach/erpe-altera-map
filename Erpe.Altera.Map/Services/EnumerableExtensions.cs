@@ -1,6 +1,5 @@
-﻿// <copyright file="EnumerableExtensions.cs" company="Frank Hambach">
-// Copyright (c) Frank Hambach. All rights reserved.
-// </copyright>
+﻿// Copyright (c) Frank Hambach. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Services;
 
@@ -11,6 +10,23 @@ using System.Linq;
 public static class EnumerableExtensions
 {
     public static IEnumerable<IEnumerable<T>> Chunk<T>(this IEnumerable<T> items, int size)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        return ChunkInternal(items, size);
+    }
+
+    public static IEnumerable<IList<TSource>> ChunkBy<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, bool> predicate)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(predicate);
+
+        return ChunkByInternal(source, predicate);
+    }
+
+    private static IEnumerable<IEnumerable<T>> ChunkInternal<T>(this IEnumerable<T> items, int size)
     {
         using IEnumerator<T> enumerator = items.GetEnumerator();
         bool hasNext = enumerator.MoveNext();
@@ -31,7 +47,7 @@ public static class EnumerableExtensions
         }
     }
 
-    public static IEnumerable<IList<TSource>> ChunkBy<TSource>(
+    private static IEnumerable<IList<TSource>> ChunkByInternal<TSource>(
         this IEnumerable<TSource> source,
         Func<TSource, bool> predicate)
     {

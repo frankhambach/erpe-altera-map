@@ -1,6 +1,5 @@
-﻿// <copyright file="TopologyService.cs" company="Frank Hambach">
-// Copyright (c) Frank Hambach. All rights reserved.
-// </copyright>
+﻿// Copyright (c) Frank Hambach. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Services;
 
@@ -12,8 +11,9 @@ using Erpe.Altera.Map.Contracts;
 
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Operation.Polygonize;
+using NetTopologySuite.Simplify;
 
-public class TopologyService : ITopologyService
+public sealed class TopologyService : ITopologyService
 {
     private readonly GeometryFactory geometryFactory;
 
@@ -22,12 +22,14 @@ public class TopologyService : ITopologyService
         this.geometryFactory = geometryFactory;
     }
 
-    public LinearRing Close(LineString lineString)
+    public LinearRing Close(CoordinateSequence coordinateSequence)
     {
+        ArgumentNullException.ThrowIfNull(coordinateSequence);
+
         return this.geometryFactory.CreateLinearRing(
-            lineString.IsClosed
-                ? lineString.Coordinates
-                : lineString.Coordinates.Append(lineString.Coordinates[0].Copy()).ToArray());
+            coordinateSequence.GetCoordinate(0).Equals2D(coordinateSequence.GetCoordinate(coordinateSequence.Count - 1))
+                ? coordinateSequence.ToCoordinateArray()
+                : coordinateSequence.ToCoordinateArray().Append(coordinateSequence.GetCoordinateCopy(0)).ToArray());
     }
 
     public IEnumerable<Polygon> Polygonize(IReadOnlyCollection<LinearRing> linearRings)
@@ -36,34 +38,19 @@ public class TopologyService : ITopologyService
 
         FindSmallestEnclosingLinearRings(linearRings, smallestEnclosingLinearRings);
         return smallestEnclosingLinearRings.Where(keyValuePair => keyValuePair.Value is null)
-            .SelectMany(keyValuePair => CreatePolygons(keyValuePair.Key, smallestEnclosingLinearRings));
+            .SelectMany(keyValuePair => this.CreatePolygons(keyValuePair.Key, smallestEnclosingLinearRings));
     }
 
     public LinearRing Unloop(LinearRing linearRing)
     {
+        ArgumentNullException.ThrowIfNull(linearRing);
+
         Polygonizer polygonizer = new Polygonizer();
-        LineString lineString = linearRing.Factory.CreateLineString(linearRing.CoordinateSequence);
-        Point point = lineString.Factory.CreatePoint(lineString.GetCoordinateN(0));
+        LineString lineString = this.geometryFactory.CreateLineString(linearRing.CoordinateSequence);
+        Point point = this.geometryFactory.CreatePoint(lineString.GetCoordinateN(0));
         polygonizer.Add(lineString.Union(point));
         Polygon result = polygonizer.GetPolygons().OfType<Polygon>().MaxBy(polygon => polygon.Area) ?? Polygon.Empty;
         return result.Shell;
-    }
-
-    private static IEnumerable<Polygon> CreatePolygons(
-        LinearRing enclosingLinearRing,
-        IDictionary<LinearRing, LinearRing?> smallestEnclosingLinearRings)
-    {
-        LinearRing[] enclosedLinearRings = smallestEnclosingLinearRings
-            .Where(keyValuePair => keyValuePair.Value == enclosingLinearRing)
-            .Select(keyValuePair => keyValuePair.Key)
-            .ToArray();
-        return new[] { new Polygon(enclosingLinearRing, enclosedLinearRings) }.Concat(
-            smallestEnclosingLinearRings
-                .Where(
-                    keyValuePair => Array.Exists(
-                        enclosedLinearRings,
-                        enclosedLinearRing => keyValuePair.Value == enclosedLinearRing))
-                .SelectMany(keyValuePair => CreatePolygons(keyValuePair.Key, smallestEnclosingLinearRings)));
     }
 
     private static void FindSmallestEnclosingLinearRings(
@@ -97,5 +84,22 @@ public class TopologyService : ITopologyService
                     break;
             }
         }
+    }
+
+    private IEnumerable<Polygon> CreatePolygons(
+        LinearRing enclosingLinearRing,
+        IDictionary<LinearRing, LinearRing?> smallestEnclosingLinearRings)
+    {
+        LinearRing[] enclosedLinearRings = smallestEnclosingLinearRings
+            .Where(keyValuePair => keyValuePair.Value == enclosingLinearRing)
+            .Select(keyValuePair => keyValuePair.Key)
+            .ToArray();
+        return new[] { this.geometryFactory.CreatePolygon(enclosingLinearRing, enclosedLinearRings) }.Concat(
+            smallestEnclosingLinearRings
+                .Where(
+                    keyValuePair => Array.Exists(
+                        enclosedLinearRings,
+                        enclosedLinearRing => keyValuePair.Value == enclosedLinearRing))
+                .SelectMany(keyValuePair => this.CreatePolygons(keyValuePair.Key, smallestEnclosingLinearRings)));
     }
 }

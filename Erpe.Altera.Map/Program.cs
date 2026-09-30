@@ -1,10 +1,11 @@
-﻿// <copyright file="Program.cs" company="Frank Hambach">
-// Copyright (c) Frank Hambach. All rights reserved.
-// </copyright>
+﻿// Copyright (c) Frank Hambach. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map;
 
 using System.CommandLine;
+using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 using Erpe.Altera.Map.Commands;
@@ -24,8 +25,8 @@ internal static class Program
     public static async Task<int> Main(string[] args)
     {
         Log.Logger = new LoggerConfiguration().MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.Debug()
+            .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
+            .WriteTo.Debug(formatProvider: CultureInfo.InvariantCulture)
             .CreateLogger();
 
         try
@@ -45,9 +46,12 @@ internal static class Program
             services.AddTransient<ISvgApproximationService, SvgApproximationService>();
             services.AddTransient<IProjectionService, WinkelTripelProjectionService>();
             services.AddTransient<ITopologyService, TopologyService>();
+            services.AddTransient<ICorrectionService, CorrectionService>();
+            services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();
             services.AddTransient<Command, ConvertCommand>();
 
-            await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            ServiceProvider serviceProvider = services.BuildServiceProvider();
+            await using ConfiguredAsyncDisposable disposable = serviceProvider.ConfigureAwait(false);
 
             Command rootCommand = new RootCommand();
             foreach (Command command in serviceProvider.GetServices<Command>())
@@ -55,11 +59,11 @@ internal static class Program
                 rootCommand.AddCommand(command);
             }
 
-            return await rootCommand.InvokeAsync(args);
+            return await rootCommand.InvokeAsync(args).ConfigureAwait(false);
         }
         finally
         {
-            await Log.CloseAndFlushAsync();
+            await Log.CloseAndFlushAsync().ConfigureAwait(false);
         }
     }
 }

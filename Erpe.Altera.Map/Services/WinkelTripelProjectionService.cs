@@ -1,11 +1,9 @@
-﻿// <copyright file="WinkelTripelProjectionService.cs" company="Frank Hambach">
-// Copyright (c) Frank Hambach. All rights reserved.
-// </copyright>
+﻿// Copyright (c) Frank Hambach. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Services;
 
 using System;
-using System.Linq;
 
 using Erpe.Altera.Map.Contracts;
 
@@ -13,7 +11,7 @@ using NetTopologySuite.Geometries;
 
 using Serilog;
 
-public class WinkelTripelProjectionService : IProjectionService
+public sealed class WinkelTripelProjectionService : IProjectionService
 {
     private const double Epsilon = 1e-12;
 
@@ -32,17 +30,17 @@ public class WinkelTripelProjectionService : IProjectionService
         this.geometryFactory = geometryFactory;
     }
 
-    public LineString Unproject(CoordinateSequence coordinateSequence, Envelope sourceEnvelope)
+    /// <summary>
+    /// Rescales the given coordinate from the source envelope to the Winkel Tripel projection envelope.
+    /// </summary>
+    /// <param name="coordinate">The coordinate to be rescaled.</param>
+    /// <param name="sourceEnvelope">The source envelope from which the coordinate is rescaled.</param>
+    /// <returns>A new coordinate rescaled to the Winkel Tripel projection envelope.</returns>
+    public Coordinate Rescale(Coordinate coordinate, Envelope sourceEnvelope)
     {
-        return this.geometryFactory.CreateLineString(
-            Enumerable.Range(0, coordinateSequence.Count)
-                .Select(coordinateSequence.GetCoordinate)
-                .Select(coordinate => this.Unproject(Transform(coordinate, sourceEnvelope)))
-                .ToArray());
-    }
+        ArgumentNullException.ThrowIfNull(coordinate);
+        ArgumentNullException.ThrowIfNull(sourceEnvelope);
 
-    private static Coordinate Transform(Coordinate coordinate, Envelope sourceEnvelope)
-    {
         double x = WinkelTripelEnvelope.MinX
             + (((coordinate.X - sourceEnvelope.MinX) / (sourceEnvelope.MaxX - sourceEnvelope.MinX))
                 * (WinkelTripelEnvelope.MaxX - WinkelTripelEnvelope.MinX));
@@ -52,8 +50,10 @@ public class WinkelTripelProjectionService : IProjectionService
         return new Coordinate(x, y);
     }
 
-    private Coordinate Unproject(Coordinate coordinate)
+    public Coordinate Unproject(Coordinate coordinate)
     {
+        ArgumentNullException.ThrowIfNull(coordinate);
+
         const double cosPhi1 = 2 / Math.PI;
 
         double sinHalfLambda, cosHalfLambda, sinPhi, cosPhi;
@@ -84,10 +84,12 @@ public class WinkelTripelProjectionService : IProjectionService
             sinAlphaSquared = 1 - (cosAlpha * cosAlpha);
             sinAlpha = Math.Sqrt(sinAlphaSquared);
 
-            if (sinAlphaSquared == 0.0)
+            if (Math.Abs(sinAlphaSquared) < Epsilon)
             {
                 Log.Error("Denominator is zero.");
-                return new Coordinate(lambda, phi);
+                return new Coordinate(
+                    this.geometryFactory.PrecisionModel.MakePrecise(lambda),
+                    this.geometryFactory.PrecisionModel.MakePrecise(phi));
             }
 
             x = 0.5 * (((2.0 * cosPhi * sinHalfLambda * alpha) / sinAlpha) + (lambda * cosPhi1));
@@ -107,7 +109,7 @@ public class WinkelTripelProjectionService : IProjectionService
                     phi -= 2.0 * (phi + (Math.PI / 2.0));
                 }
 
-                return new Coordinate((lambda / Math.PI) * 180.0, (phi / Math.PI) * 180.0);
+                return this.CreateCoordinate(lambda, phi);
             }
 
             derivativeXByPhi = ((sinHalfLambda * cosHalfLambda * sinPhi * cosPhi)
@@ -140,8 +142,25 @@ public class WinkelTripelProjectionService : IProjectionService
             "Could not accurately determine coordinates for projected point {Point} after {IterationCount} iterations.",
             coordinate,
             MaximumIterationCount);
+        return this.CreateCoordinate(lambda, phi);
+    }
+
+    private Coordinate CreateCoordinate(double lambda, double phi)
+    {
+        double x = (lambda / Math.PI) * 180.0;
+        double y = (phi / Math.PI) * 180.0;
+        if (x > 180.0)
+        {
+            x = 180.0;
+        }
+
+        if (x < -180.0)
+        {
+            x = -180.0;
+        }
+
         return new Coordinate(
-            this.geometryFactory.PrecisionModel.MakePrecise((lambda / Math.PI) * 180.0),
-            this.geometryFactory.PrecisionModel.MakePrecise((phi / Math.PI) * 180.0));
+            this.geometryFactory.PrecisionModel.MakePrecise(x),
+            this.geometryFactory.PrecisionModel.MakePrecise(y));
     }
 }
