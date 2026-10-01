@@ -59,11 +59,19 @@ Two tolerances follow, and only two:
 model so noding and polygonizing are reproducible and exact:
 
 ```csharp
-new PrecisionModel(1000.0)   // 0.001 SVG units ≈ 6.5 m
+new PrecisionModel(10000.0)   // 0.0001 SVG units ≈ 0.65 m
 ```
 
-0.001 units is 440× finer than the shortest legitimate connector, so nothing real
-is quantised away.
+This grid is 4400× finer than the shortest legitimate connector and 5000× finer than
+`WeldTolerance`, so nothing real is quantised away and snap-rounding robustness is
+unaffected by the choice.
+
+A coarser 0.001 units (≈ 6.5 m) was tried first and rejected on measurement: it moved
+52 countries' areas by more than 0.1%, worst case 3.7% on Sint Maarten, because a
+fixed absolute grid costs the most on the smallest islands. At 0.0001 units only one
+country moves by more than 0.1%. Both are below the current 4-decimal output
+precision, so this is invisible in the written GeoJSON — but area is computed before
+rounding, which is what shows the shift the written file does not.
 
 **0b. Keep SVG coordinates through the pipeline.** `HandleAsync` currently calls
 `Rescale` then `Unproject` inside the per-element `Task.Run`, so every later stage
@@ -264,12 +272,12 @@ neighbours of a border receive literally the same output coordinates. This is th
 step that makes "borders match exactly" a property of the construction rather than
 something to verify afterwards.
 
-**6c. Output precision.** `RoundCoordinateSequenceFilter`
-(`ConvertCommand.cs:454`) rounds to 4 decimal degrees ≈ 0.0017 SVG units, which is
-~17× coarser than the Phase 0a noding grid — distinct nodes would collide and
-produce degenerate rings. Either raise output precision to 6 decimals, or coarsen
-the noding grid to match. 6 decimals is the safer default; the file grows, and the
-`-low` / `-medium` outputs are where size is managed.
+**6c. Output precision.** `RoundCoordinateSequenceFilter` rounds to 4 decimal
+degrees ≈ 0.0017 SVG units, which is ~17× coarser than the Phase 0a noding grid —
+distinct nodes would collide and produce degenerate rings. Raise output precision to
+6 decimals; the file grows, and the `-low` / `-medium` outputs are where size is
+managed. Coarsening the noding grid to match is the alternative, but Phase 0a
+rejected that on measurement.
 
 **6d. Simplification must become arc-based.** `VisvalingamSimplificationService`
 currently simplifies each polygon independently, which would give the two sides of

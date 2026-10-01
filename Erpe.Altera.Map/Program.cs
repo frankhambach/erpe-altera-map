@@ -22,6 +22,14 @@ using Serilog;
 
 internal static class Program
 {
+    // A fixed precision model, so that noding and overlay are reproducible and exact.
+    // The topology pipeline works in SVG coordinates, where the source map spans
+    // 6128.3 units for 360 degrees of longitude, so this grid is 0.0001 units, about
+    // 0.65 m. That is 5000 times finer than the weld tolerance the pipeline relies on,
+    // and was chosen over a coarser 0.001 units because the coarser grid moved 52
+    // countries' areas by more than 0.1 percent, against one at this scale.
+    private const double PrecisionScale = 10000.0;
+
     public static async Task<int> Main(string[] args)
     {
         Log.Logger = new LoggerConfiguration().MinimumLevel.Information()
@@ -36,7 +44,7 @@ internal static class Program
             NtsGeometryServices currentInstance = NtsGeometryServices.Instance;
             NtsGeometryServices.Instance = new NtsGeometryServices(
                 CoordinateArraySequenceFactory.Instance,
-                currentInstance.DefaultPrecisionModel,
+                new PrecisionModel(PrecisionScale),
                 currentInstance.DefaultSRID,
                 GeometryOverlay.NG,
                 currentInstance.CoordinateEqualityComparer);

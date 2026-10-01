@@ -25,6 +25,13 @@ using Svg;
 
 internal sealed class ConvertCommand : Command
 {
+    // Correction happens in SVG coordinates, because the defects being corrected are
+    // drawing errors: they are uniform in SVG units and vary by roughly a factor of
+    // ten with latitude once unprojected. This is the SVG-unit equivalent of the
+    // 0.001 degrees used before, and Phase 3 of docs/topology-pipeline.md replaces it
+    // with the measured weld tolerance of 0.5 units.
+    private const double SnapTolerance = 0.02;
+
     private static readonly JsonSerializerOptions JsonSerializerOptions = new JsonSerializerOptions
         {
             WriteIndented = false,
@@ -183,6 +190,46 @@ internal sealed class ConvertCommand : Command
             .ConfigureAwait(false);
     }
 
+    // Unprojects every shape in place, turning SVG coordinates into longitude and
+    // latitude. Memoizing on the SVG coordinate is what makes borders match: two
+    // shapes that share a vertex in SVG space are guaranteed the same output value,
+    // because Unproject is only ever evaluated once per distinct input.
+    private void Unproject(IEnumerable<Country> countries, Envelope sourceEnvelope)
+    {
+        Dictionary<Coordinate, Coordinate> unprojected = new Dictionary<Coordinate, Coordinate>();
+        foreach (Shape shape in countries.SelectMany(country => country.Shapes))
+        {
+            shape.Polygon = this.geometryFactory.CreatePolygon(
+                this.Unproject(shape.Polygon.Shell, sourceEnvelope, unprojected),
+                shape.Polygon.Holes.Select(hole => this.Unproject(hole, sourceEnvelope, unprojected)).ToArray());
+        }
+    }
+
+    private LinearRing Unproject(
+        LinearRing linearRing,
+        Envelope sourceEnvelope,
+        IDictionary<Coordinate, Coordinate> unprojected)
+    {
+        return this.geometryFactory.CreateLinearRing(
+            linearRing.CoordinateSequence.ToCoordinateArray()
+                .Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected))
+                .ToArray());
+    }
+
+    private Coordinate Unproject(
+        Coordinate coordinate,
+        Envelope sourceEnvelope,
+        IDictionary<Coordinate, Coordinate> unprojected)
+    {
+        if (!unprojected.TryGetValue(coordinate, out Coordinate? result))
+        {
+            result = this.projectionService.Unproject(this.projectionService.Rescale(coordinate, sourceEnvelope));
+            unprojected.Add(coordinate, result);
+        }
+
+        return result.Copy();
+    }
+
     private Envelope GetEnvelope(SvgDocument document)
     {
         List<Coordinate> rimPoints = document.Descendants()
@@ -219,12 +266,6 @@ internal sealed class ConvertCommand : Command
                                     // A ring needs at least three distinct points to enclose an area.
                                     .Where(coordinateSequence => coordinateSequence.Count >= 3)
                                     .Distinct(new CoordinateSequenceEqualityComparer())
-                                    .Select(coordinateSequence => this.geometryFactory.CoordinateSequenceFactory.Create(
-                                        coordinateSequence.ToCoordinateArray()
-                                            .Select(coordinate =>
-                                                this.projectionService.Rescale(coordinate, sourceEnvelope))
-                                            .Select(coordinate => this.projectionService.Unproject(coordinate))
-                                            .ToArray()))
                                     .ToArray())
                             .ConfigureAwait(false))))
             .ConfigureAwait(false)).ToArray();
@@ -232,7 +273,7 @@ internal sealed class ConvertCommand : Command
         this.correctionService.Snap(
             groupings.SelectMany(grouping => grouping.CoordinateSequences)
                 .SelectMany(coordinateSequence => coordinateSequence.ToCoordinateArray()),
-            0.001f);
+            SnapTolerance);
 
         Country[] countries = groupings
             .Select(grouping => new Country(
@@ -246,6 +287,8 @@ internal sealed class ConvertCommand : Command
                     .Where(polygon => !polygon.IsEmpty)
                     .Select((polygon, index) => new Shape($"{grouping.Name}-{index}", polygon))))
             .ToArray();
+
+        this.Unproject(countries, sourceEnvelope);
 
         await this.WriteGeoJsonAsync(
                 countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState),
