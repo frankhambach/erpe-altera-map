@@ -135,7 +135,6 @@ internal sealed class ConvertCommand : Command
             {
                 "Country_Shapes" => CountryType.UnitaryState,
                 "Substate_Shapes" => CountryType.FederalState,
-                "Religion_Shapes" => CountryType.UnitaryState,
                 _ => throw new InvalidOperationException($"Unexpected shapes element ID '{shapesElement?.ID}'."),
             };
 
