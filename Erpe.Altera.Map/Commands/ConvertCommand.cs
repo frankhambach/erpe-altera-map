@@ -210,12 +210,15 @@ internal sealed class ConvertCommand : Command
 
         (string Name, CountryType Type, CoordinateSequence[] CoordinateSequences)[] groupings = (await Task.WhenAll(
                 shapesElements.SelectMany(shapesElement => shapesElement.Descendants())
-                    .Where(element => element is SvgPath or SvgRectangle or SvgPolygon)
+                    .Where(element => element is SvgPath or SvgLine or SvgRectangle or SvgPolygon)
                     .GroupBy(element => GetName(element, shapesElements))
                     .Where(grouping => grouping.Key != null)
                     .Select(async grouping => (grouping.Key!.Value.Name, grouping.Key!.Value.Type,
                         Lines: await Task.Run(() =>
                                 grouping.SelectMany(element => this.svgApproximationService.Approximate(element))
+
+                                    // A ring needs at least three distinct points to enclose an area.
+                                    .Where(coordinateSequence => coordinateSequence.Count >= 3)
                                     .Distinct(new CoordinateSequenceEqualityComparer())
                                     .Select(coordinateSequence => this.geometryFactory.CoordinateSequenceFactory.Create(
                                         coordinateSequence.ToCoordinateArray()

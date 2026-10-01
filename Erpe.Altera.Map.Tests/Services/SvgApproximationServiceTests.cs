@@ -185,6 +185,95 @@ public class SvgApproximationServiceTests
 
     [AutoCustomizedData]
     [Test]
+    public void Approximate_ShouldReturnCoordinateSequence_WhenLineIsProvided(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        SvgApproximationService service = new SvgApproximationService(coordinateSequenceFactory);
+        SvgLine line = new SvgLine
+            {
+                StartX = new SvgUnit(0),
+                StartY = new SvgUnit(0),
+                EndX = new SvgUnit(3),
+                EndY = new SvgUnit(4),
+            };
+
+        IEnumerable<CoordinateSequence> result = service.Approximate(line);
+
+        result.Should()
+            .BeEquivalentTo(
+                [
+                    coordinateSequenceFactory.Create([new Coordinate(0, 0), new Coordinate(3, 4)]),
+                ],
+                options => options.WithStrictOrdering());
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Approximate_ShouldReturnCoordinateSequence_WhenPathSubPathHasTwoPoints(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        SvgApproximationService service = new SvgApproximationService(coordinateSequenceFactory);
+        SvgPath path = new SvgPath
+            {
+                PathData =
+                    [
+                        new SvgMoveToSegment(false, new PointF(0, 0)),
+                        new SvgLineSegment(false, new PointF(1, 0)),
+                    ],
+            };
+
+        IEnumerable<CoordinateSequence> result = service.Approximate(path);
+
+        result.Should()
+            .BeEquivalentTo(
+                [
+                    coordinateSequenceFactory.Create([new Coordinate(0, 0), new Coordinate(1, 0)]),
+                ],
+                options => options.WithStrictOrdering());
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Approximate_ShouldReturnEmpty_WhenLineIsShorterThanMinimumLength(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        SvgApproximationService service = new SvgApproximationService(coordinateSequenceFactory);
+        SvgLine line = new SvgLine
+            {
+                StartX = new SvgUnit(1462.53f),
+                StartY = new SvgUnit(1445.06f),
+                EndX = new SvgUnit(1462.54f),
+                EndY = new SvgUnit(1445.06f),
+            };
+
+        IEnumerable<CoordinateSequence> result = service.Approximate(line);
+
+        result.Should().BeEmpty();
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Approximate_ShouldReturnEmpty_WhenPathSubPathIsShorterThanMinimumLength(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        SvgApproximationService service = new SvgApproximationService(coordinateSequenceFactory);
+        SvgPath path = new SvgPath
+            {
+                PathData =
+                    [
+                        new SvgMoveToSegment(false, new PointF(0, 0)),
+                        new SvgLineSegment(false, new PointF(0.02f, 0)),
+                        new SvgLineSegment(false, new PointF(0.02f, 0.02f)),
+                    ],
+            };
+
+        IEnumerable<CoordinateSequence> result = service.Approximate(path);
+
+        result.Should().BeEmpty();
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Approximate_ShouldReturnCoordinateSequence_WhenPolygonIsProvided(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
