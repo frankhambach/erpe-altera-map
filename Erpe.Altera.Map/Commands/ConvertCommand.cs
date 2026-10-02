@@ -56,6 +56,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly ICorrectionService correctionService;
 
+    private readonly IFaceAssignmentService faceAssignmentService;
+
     private readonly GeometryFactory geometryFactory;
 
     private readonly IProjectionService projectionService;
@@ -75,6 +77,7 @@ internal sealed class ConvertCommand : Command
         ICoastlineService coastlineService,
         ITopologyService topologyService,
         ICorrectionService correctionService,
+        IFaceAssignmentService faceAssignmentService,
         ISimplificationService simplificationService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
@@ -85,6 +88,7 @@ internal sealed class ConvertCommand : Command
         this.coastlineService = coastlineService;
         this.topologyService = topologyService;
         this.correctionService = correctionService;
+        this.faceAssignmentService = faceAssignmentService;
         this.simplificationService = simplificationService;
         this.geometryFactory = geometryFactory;
 
@@ -324,6 +328,13 @@ internal sealed class ConvertCommand : Command
         this.correctionService.Weld(arcGraph, WeldTolerance);
 
         this.topologyService.BuildFaces(arcGraph);
+
+        // The national layer only. A substate shape lies inside its country's shape, so
+        // passing both would report every substate face as belonging to two countries at
+        // once. Substates subdivide these faces further and need a pass of their own.
+        this.faceAssignmentService.Assign(
+            arcGraph,
+            countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederatedState));
 
         this.Unproject(countries, sourceEnvelope);
 

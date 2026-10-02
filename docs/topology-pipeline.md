@@ -211,6 +211,18 @@ internal borders are discarded — those come from the tracers.
   the separation is what the threshold rests on. If that warning ever fires, the
   ratio has stopped being a clean discriminator and needs rethinking, not nudging.
 
+**2c-bis. Cut tracers back to the lake shore.** Borders are drawn over lakes rather than
+stopping at them: 136 tracers in the sample map reach inside one. None crosses — the
+deepest goes 0.783 units in and 113 of the 136 stay within 0.05 — but left alone they
+shave slivers off the lake when the faces are traced, so a lake ends up partly owned by
+the countries around it. Measured before the fix: 108 sliver faces, 751 units², 0.877%
+of all lake area, across 35 lakes.
+
+Clipping here rather than afterwards means the trimmed end is welded onto the lake ring
+in Phase 3 and the lake stays a single face. 379 tracers are trimmed, removing 31.95
+units of line in all. A check afterwards reports any tracer still inside a lake: one
+remains, by 0.39 units, which is logged rather than forced.
+
 **2d.** Coast rings need splitting at the points where Phase 3 attaches a tracer
 endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the noder
 do the splitting. Each ring is therefore added as one closed arc for now.
@@ -348,30 +360,44 @@ exclude their lakes.
 
 ## Phase 5 — assign faces to countries
 
-New `IFaceAssignmentService`.
+**5a. Land or water comes from the nesting, not from the shapes.** A face nothing
+encloses is land; a face enclosed by land is a lake; an island in that lake is land
+again. The enclosure relation comes from Phase 4's holes — a face sits inside another
+when the ring bounding it appears as one of that face's holes — so the answer holds
+whether or not the country shapes were drawn with their lakes cut out. They were not:
+the shapes are solid, so a point test alone would hand every lake to the country around
+it.
 
-**5a.** For each face take an interior point (`Geometry.InteriorPoint`) and find
-the containing `Country_Shapes` polygon via an `STRtree`. One match → that country
-owns the face.
+**Lakes are left unowned.** They are water, not territory. With the tracers clipped in
+Phase 2 each lake is a single face, so there is nothing to divide and no rule is needed
+beyond leaving them out.
 
-**5b. Ambiguity, and the key diagnostic.**
+**5b. Faces are matched to countries, not to shapes.** A country is made of many shapes
+and they routinely overlap each other, so counting shapes reports almost every face as
+belonging to two countries at once — 724 of them. The shapes must be grouped by country
+first.
 
-- 0 matches → sea, or an unclaimed sliver (5c).
-- ≥ 2 matches → the shapes overlap there. Resolve by the larger area of
-  intersection with the face. **Also log it:** a *large* face inside two different
-  countries means a tracer is missing and two countries have fused into one face.
-  That is the main failure mode of this whole approach, and this check is how it
-  surfaces. Set a threshold on face area and treat exceedances as errors, not
-  warnings.
+**The national and substate layers are separate universes.** A substate shape lies
+entirely inside its country's shape, so passing both to one pass reports every substate
+face as fused: 723 faces. Only `UnitaryState` and `FederatedState` go into this pass.
+Substates subdivide the same faces again and need a pass of their own, which Phase 6
+needs anyway since it writes the two layers separately.
 
-**5c. Unclaimed land faces → absorb.** Merge each into the neighbour sharing the
-longest arc with it. This single rule replaces gap detection entirely: every gap,
-enclosed or formerly open to the sea, is by now a closed face that nobody claimed.
+**A fused face needs an area threshold.** Country shapes overlap slightly all along
+every border they *do* share, leaving slivers of almost no area inside both at once. 17
+faces lie in two countries; 15 of them have an area of 0.0. Only a face of real size
+means a tracer is genuinely missing, so the report is limited to those above 25 units².
 
-**5d. Sea.** Keep the ocean face as a first-class face rather than discarding it.
-Coastlines then become shared arcs too, and the topology is fully closed instead of
-having every coast as a dangling ring. Emit it as an `Ocean` feature or filter it
-at write time.
+**5c. Unclaimed land faces are absorbed** into the neighbour they share the most border
+with. This is the whole of gap filling in this representation.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 6541 faces assigned to
+countries, 415 left as water, 160 of 168 unclaimed faces absorbed, and exactly **two**
+genuine missing tracers reported — Martinique/Caribbea at 57.6 units² and
+Caribbea/Iouanorre at 27.3, both small Caribbean islands.
+
+Still open: 415 water faces against 462 kept lakes, and 8 unclaimed faces that found no
+owned neighbour to join.
 
 ## Phase 6 — assemble and write
 

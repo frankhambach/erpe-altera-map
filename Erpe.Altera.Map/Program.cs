@@ -57,6 +57,7 @@ internal static class Program
             services.AddTransient<ICoastlineService, CoastlineService>();
             services.AddTransient<ITopologyService, TopologyService>();
             services.AddTransient<ICorrectionService, CorrectionService>();
+            services.AddTransient<IFaceAssignmentService, FaceAssignmentService>();
             services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();
             services.AddTransient<Command, ConvertCommand>();
 
