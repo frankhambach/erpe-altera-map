@@ -299,17 +299,52 @@ on the coast — and 7 remain loose and reported. T-junctions outnumber endpoint
 endpoint joins by better than ten to one, so splitting is the main path, not the
 exception.
 
-## Phase 4 — node and polygonize
+## Phase 4 — node and trace faces
 
-In `ITopologyService`:
+**Faces are traced through the arc graph, not rebuilt with `Polygonizer`.** This
+departs from the original plan, which said to run `SnapRoundingNoder` and then
+`Polygonizer`. Both return fresh geometry — `LineString`s and `Polygon`s — with no way
+to carry `Arc` identity through, so the arcs would have to be recovered afterwards by
+comparing coordinates. Since "both neighbours reference the same `Arc`" is the
+guarantee the whole design rests on, it is not something to discard and rebuild.
 
-1. Feed all arcs — border, substate, coast — to `SnapRoundingNoder` at the
-   Phase 0a precision model. This resolves genuine crossings robustly and
-   guarantees a valid arrangement.
-2. `Polygonizer` → faces. Capture `GetDangles()` and `GetCutEdges()` as
-   diagnostics: a dangle after Phase 3 means a border that failed to connect.
-3. Record, for each arc, the faces on its left and right. This adjacency is what
-   Phase 5c and the TopoJSON writer need.
+**4a. Node the crossings.** 400 places remain where two arcs cross away from any node,
+which a traversal cannot represent: each arc would be traced as though the other were
+not there and the faces around the crossing would overlap. Each crossing is split in
+place, both arcs taking the same new node. An arc crossing *itself* counts — 166 of
+the 400 are self-crossings, and they break a traversal exactly as badly.
+
+**4b. Trace the rings.** At each node the outgoing half-edges are sorted by the
+direction they leave in. Arriving along a half-edge, the ring continues along the next
+half-edge **clockwise** from the way back, which keeps the enclosed area on the left.
+Bounded faces come out anticlockwise with a positive signed area; the outer boundary of
+each separate piece of land comes out the other way with a negative one.
+
+**4c. Assign the outlines.** Each negative ring is the outside of one piece of land, so
+it belongs as a hole to whichever face encloses it, and to the ocean if nothing does.
+Containment must be tested with **`Contains`, not `Covers`**: an island's outline is its
+own shell traversed the other way round and shares every vertex with it, so `Covers`
+reports the shell as enclosing its own outline and no island ever reaches the ocean.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 400 crossings noded —
+matching an independent count exactly — and 7182 faces traced with 439 holes, 5188
+outlines going to the ocean.
+
+Two invariants are checked in the run and both hold:
+
+- **Every half-edge lies in exactly one ring.** This is what "the faces tile" means,
+  and it is checked directly rather than inferred from areas. It is the first thing to
+  look at if a face ever comes out wrong.
+- **The face areas account for the land.** Faces cover 5,834,924 square units against
+  the 5,769,621 the coastline enclosed. The 65,303 excess is the 23 lakes (462 kept
+  minus 439 holes) that a border crosses: splitting such a lake's ring means the land
+  around it routes through the lake rather than carrying it as a hole, so the lake's
+  halves become faces in their own right. A total running *under* the land area would
+  mean a face had failed to close, and is the failure to watch for.
+
+Those 23 lake faces are the one thing Phase 5 has to handle deliberately: they are
+water, but they sit inside a country shape and so will label as land unless the shapes
+exclude their lakes.
 
 ## Phase 5 — assign faces to countries
 

@@ -323,6 +323,8 @@ internal sealed class ConvertCommand : Command
 
         this.correctionService.Weld(arcGraph, WeldTolerance);
 
+        this.topologyService.BuildFaces(arcGraph);
+
         this.Unproject(countries, sourceEnvelope);
 
         await this.WriteGeoJsonAsync(

@@ -88,10 +88,12 @@ public sealed class CoastlineService : ICoastlineService
         }
 
         Log.Information(
-            "Built {ShellCount} coast shells, kept {LakeCount} lakes and discarded {GapCount} holes as gaps.",
+            "Built {ShellCount} coast shells, kept {LakeCount} lakes and discarded {GapCount} holes as gaps, "
+            + "enclosing {Area:0.0} square units of land.",
             land.Length,
             lakeCount,
-            gapCount);
+            gapCount,
+            land.Sum(polygon => polygon.Area));
 
         if (ambiguousCount > 0)
         {
