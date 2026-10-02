@@ -1,4 +1,4 @@
-// Copyright (c) Frank Hambach. All rights reserved.
+﻿// Copyright (c) Frank Hambach. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Models;
@@ -17,6 +17,8 @@ public sealed class ArcGraph(CoordinateSequenceFactory coordinateSequenceFactory
     private int nextNodeId;
 
     public IList<Arc> Arcs { get; } = new List<Arc>();
+
+    public CoordinateSequenceFactory CoordinateSequenceFactory => coordinateSequenceFactory;
 
     public IList<Face> Faces { get; } = new List<Face>();
 

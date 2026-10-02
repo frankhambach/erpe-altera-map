@@ -34,6 +34,14 @@ internal sealed class ConvertCommand : Command
     // with the measured weld tolerance of 0.5 units.
     private const double SnapTolerance = 0.02;
 
+    // How far a loose arc end may reach to find what it was drawn to meet, in SVG units.
+    // Chosen by measurement: 0.5 leaves 147 ends loose, 0.75 leaves 44 and 1.0 leaves 7.
+    // Going further does not pay - at 1.5 the two ends it recovers cost 30 further endpoint
+    // merges and 25 fewer splits, meaning ends that should attach partway along an arc are
+    // being merged with another endpoint instead. It stays below the drawing's own
+    // resolution of about 1.75 units between consecutive points.
+    private const double WeldTolerance = 1.0;
+
     private static readonly JsonSerializerOptions JsonSerializerOptions = new JsonSerializerOptions
         {
             WriteIndented = false,
@@ -312,6 +320,8 @@ internal sealed class ConvertCommand : Command
         this.coastlineService.AddArcs(
             countries.SelectMany(country => country.Shapes).Select(shape => shape.Polygon),
             arcGraph);
+
+        this.correctionService.Weld(arcGraph, WeldTolerance);
 
         this.Unproject(countries, sourceEnvelope);
 

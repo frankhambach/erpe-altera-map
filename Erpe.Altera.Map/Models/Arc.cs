@@ -22,4 +22,16 @@ public sealed class Arc(int id, ArcKind kind, Node startNode, Node endNode, Coor
     public ArcKind Kind { get; } = kind;
 
     public Node StartNode { get; set; } = startNode;
+
+    // The arc as a whole line: its two nodes with the interior vertices between them.
+    // Segment i runs from index i to i + 1.
+    public Coordinate[] GetFullCoordinates()
+    {
+        Coordinate[] interior = this.Coordinates.ToCoordinateArray();
+        Coordinate[] full = new Coordinate[interior.Length + 2];
+        full[0] = this.StartNode.Coordinate;
+        interior.CopyTo(full, 1);
+        full[^1] = this.EndNode.Coordinate;
+        return full;
+    }
 }

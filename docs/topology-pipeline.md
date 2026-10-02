@@ -43,14 +43,36 @@ guessed.
 
 Two tolerances follow, and only two:
 
-- **`WeldTolerance = 0.5` units** (≈ 3 km) — how far a loose end may reach to find
-  something to attach to. Justified by the 99.59% coverage above, and by sitting
-  below the 1.75-unit linework resolution so it cannot merge genuinely distinct
-  features.
-- **`MouthBridgeTolerance = 2.0` units** (≈ 13 km) — how far across a river mouth
-  the two coastlines may be welded. Justified by the 1.60-unit measured maximum.
-  Anything beyond this is reported, never welded silently; this is what stops a
-  legitimate strait being zipped shut.
+- **`WeldTolerance = 1.0` units** (≈ 6.5 km) — how far a loose end may reach to find
+  something to attach to. It stays below the 1.75-unit linework resolution, so it
+  cannot merge genuinely distinct features.
+
+  **Revised upwards from 0.5 on measurement.** The 99.59% figure in the table above
+  was measured against `Country_Shapes` rings, but the graph's coast is the *union*
+  boundary, which sits slightly off those rings wherever shapes overlapped. Against
+  the real coast, the residue is larger and the tolerance has to cover it:
+
+  | tolerance | ends merged | ends split onto an arc | **left loose** |
+  |---|---|---|---|
+  | 0.5 | 218 | 2507 | **147** |
+  | 0.75 | 234 | 2594 | **44** |
+  | 1.0 | 257 | 2608 | **7** |
+  | 1.5 | 287 | 2583 | **2** |
+
+  Of the 147 left loose at 0.5, 142 had an arc within 1.0 units (median 0.67), split
+  76 coast / 63 border / 8 substate — ordinary junctions falling just outside. Going
+  to 1.0 raises the merge count only from 218 to 257, so union-find is not chaining
+  distinct junctions together; it is picking up ends that were already isolated.
+
+  **1.5 is where it turns, which is why 1.0 is the stopping point.** The two
+  remaining loose ends cost 30 further merges *and* 25 fewer splits: ends that ought
+  to attach partway along an arc are instead being merged with another endpoint. That
+  is the chaining failure the tight tolerance exists to prevent, and it is visible in
+  the split count falling. The three candidates beyond 1.0 sit at 1.43, 2.79 and
+  12.48 and are better reported than guessed at.
+A second tolerance, `MouthBridgeTolerance`, was planned for welding river mouths shut.
+It is not needed: see 3c, where the measurement that would have set it showed there is
+nothing to weld.
 
 ## Phase 0 — groundwork
 
@@ -220,35 +242,62 @@ at the foot of the perpendicular, insert a node there, and merge the endpoint in
 it. ~1500 junctions in this file. **Do not treat this as the exception path** — it
 is how most of this map's borders meet.
 
-**3c. River-mouth weld.** For each tracer endpoint that attached to a *coast* arc
-at point `P` on ring `A`:
+**3c. River-mouth weld — dropped. Not needed for this input.**
 
-1. Find the nearest point `Q` on a ring other than `A`, within
-   `MouthBridgeTolerance`.
-2. **Side guard:** require `Q` to lie on the opposite side of the tracer from `P`,
-   by the sign of the cross product of the tracer's final direction with `P→Q`.
-   Without this the weld can attach to a ring behind the endpoint.
-3. Collapse `P`, `Q` and the tracer endpoint into a single node.
+Two separate findings retired this step.
 
-This is the step that closes gaps open to the sea. Welding the two coast walls
-together at the mouth turns the notch into a *closed* unclaimed region, bisected by
-the tracer, so Phase 5c absorbs each half into the country beside it. Without it,
-only the half of the notch cut off by the tracer closes; the other half stays an
-inlet, leaving one country's coast set back by the gap width.
+*The original premise was wrong.* It said to weld `P` to the nearest point on a ring
+*other* than its own. That does not survive Phase 2: because the coast is the
+boundary of the **union** of the countries, the two walls of a gap open to the sea
+are not two rings. They are one ring, walked in along one wall and back out along the
+other, so a different-ring test could never fire on the case it was written for.
 
-Roughly 750 welds, each local — which is why this is not done by snap-rounding the
-whole coast. A global grid at `WeldTolerance` would staircase the 7% of genuine
-coast segments shorter than 0.5 units.
+*The corrected version then found nothing to do.* The real signature of a river mouth
+is a **narrow neck**: two points close in space but far apart along the boundary,
+where "far apart along the boundary" has to mean `min(forward, perimeter - forward)`.
+A one-way walk simply returns to its own starting point, which makes every point on
+every ring look like a neck — an error caught only by running a control. Measured
+correctly over the 1024 coast landings, at a ring separation of just 5 units, enough
+to catch a notch only 2.5 units long:
 
-**3d. Report, do not guess.** Any endpoint unresolved at `WeldTolerance`, and any
-mouth whose partner ring is beyond `MouthBridgeTolerance`, goes to a warning list
-with its SVG coordinates. Expect ~12 entries, 4 of them real. This list is the
-manual-review queue for each new export, and it must stay short — if it grows,
-something changed upstream.
+| closest the ring returns | landings |
+|---|---|
+| < 0.5 units | **5** |
+| < 1.0 units | 6 |
+| < 2.0 units | 30 |
+| the next one out is 1.17 units | the other 1018 |
+
+A control taken 150 units along the same ring, away from any landing, returns close
+*more* often than the landings do — 0.8% against 0.4% within 2.0 units at separation
+over 40. So the few narrow necks that exist are ordinary coastal geography, isthmuses
+and straits, and they are not associated with borders reaching the sea.
+
+Gaps open to the sea turn out to be handled already: either the two walls fell within
+the snap and union tolerances and closed when the countries were unioned, or the gap
+was enclosed and 2c discarded it as a hole. Implementing 3c on this input would weld
+shut genuine coastal features and fix nothing.
+
+Worth re-running the same measurement against a new export before assuming this still
+holds. If necks do appear, the corrected formulation above is the one to build, with
+a tolerance capping how wide a neck may be closed.
+
+**3d. Report, do not guess.** Any endpoint unresolved at `WeldTolerance` goes to a
+warning list with its SVG coordinates and, so the report says how far short it fell
+and what it probably should have met, the kind and distance of the nearest arc beyond
+the tolerance. Expect 7 entries. This list is the manual-review queue for each new
+export, and it must stay short — if it grows, something changed upstream.
 
 **3e. Apply the tolerance to endpoints only, never to interior vertices.** The
 linework interiors are not defective; only the ends are. This keeps every coast and
-border vertex bit-identical to the drawing.
+border vertex bit-identical to the drawing, and it is why welding is done as a local
+operation rather than by snap-rounding the whole coast: a global grid at
+`WeldTolerance` would staircase the 19% of drawn segments shorter than 1 unit.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: of 2872 loose ends, 257
+merged onto each other, 2608 split an arc to attach partway along it — 1025 of those
+on the coast — and 7 remain loose and reported. T-junctions outnumber endpoint-to-
+endpoint joins by better than ten to one, so splitting is the main path, not the
+exception.
 
 ## Phase 4 — node and polygonize
 
