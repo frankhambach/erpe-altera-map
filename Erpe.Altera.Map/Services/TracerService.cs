@@ -21,16 +21,11 @@ public sealed class TracerService : ITracerService
         ImmutableDictionary<string, ArcKind>.Empty.Add("Border_Tracers", ArcKind.Border)
             .Add("Substate_Tracers", ArcKind.Substate);
 
-    private readonly CoordinateSequenceFactory coordinateSequenceFactory;
-
     private readonly ISvgApproximationService svgApproximationService;
 
-    public TracerService(
-        ISvgApproximationService svgApproximationService,
-        CoordinateSequenceFactory coordinateSequenceFactory)
+    public TracerService(ISvgApproximationService svgApproximationService)
     {
         this.svgApproximationService = svgApproximationService;
-        this.coordinateSequenceFactory = coordinateSequenceFactory;
     }
 
     public void AddArcs(SvgDocument document, ArcGraph arcGraph)
@@ -47,26 +42,11 @@ public sealed class TracerService : ITracerService
             ArcKind kind = TracerLayers[layerElement.ID];
             foreach (CoordinateSequence coordinateSequence in layerElement.Descendants()
                          .Where(element => element is SvgPath or SvgLine or SvgRectangle or SvgPolygon)
-                         .SelectMany(element => this.svgApproximationService.Approximate(element)))
+                         .SelectMany(element => this.svgApproximationService.Approximate(element))
+                         .Where(coordinateSequence => coordinateSequence.Count >= 2))
             {
-                this.AddArc(arcGraph, kind, coordinateSequence);
+                arcGraph.AddArc(kind, coordinateSequence);
             }
         }
-    }
-
-    private void AddArc(ArcGraph arcGraph, ArcKind kind, CoordinateSequence coordinateSequence)
-    {
-        Coordinate[] coordinates = coordinateSequence.ToCoordinateArray();
-        if (coordinates.Length < 2)
-        {
-            return;
-        }
-
-        // A tracer that closes on itself is an enclave border. It gets a single node, so
-        // that the ring is already closed before welding and polygonizing see it.
-        Node startNode = arcGraph.AddNode(coordinates[0]);
-        Node endNode = coordinates[0].Equals2D(coordinates[^1]) ? startNode : arcGraph.AddNode(coordinates[^1]);
-
-        arcGraph.AddArc(kind, startNode, endNode, this.coordinateSequenceFactory.Create(coordinates[1..^1]));
     }
 }

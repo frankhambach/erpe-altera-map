@@ -54,6 +54,7 @@ internal static class Program
             services.AddTransient<ISvgApproximationService, SvgApproximationService>();
             services.AddTransient<IProjectionService, WinkelTripelProjectionService>();
             services.AddTransient<ITracerService, TracerService>();
+            services.AddTransient<ICoastlineService, CoastlineService>();
             services.AddTransient<ITopologyService, TopologyService>();
             services.AddTransient<ICorrectionService, CorrectionService>();
             services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();

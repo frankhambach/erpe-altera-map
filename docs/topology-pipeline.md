@@ -167,20 +167,40 @@ internal borders are discarded — those come from the tracers.
   (discard — the interior is governed by tracers now). This is the one place the
   existing `FindHoles` criteria survive.
 
-  **The thresholds in `CorrectionService.cs:110` were tuned in degrees and must be
-  restated in SVG units:**
+  **Classify on the area-to-length ratio alone, at 0.15 SVG units.** The area test
+  from `CorrectionService.FindHoles` is dropped.
 
-  ```
-  area        < 0.007 deg²  →  < 2.0 units²      (1 deg² ≈ 290 units²)
-  area/length < 0.01  deg   →  < 0.17 units
-  ```
+  The ratio is a hydraulic radius: it has units of length and scales linearly with
+  the size of a fixed shape, so it measures thinness and smallness at once and
+  subsumes an area test. Measured over the sample map's 3094 holes it is sharply
+  bimodal — 2632 gaps top out at 0.0955 and the 462 lakes begin again at 0.1965, a
+  span of 2.06× containing nothing at all. Any threshold between those bounds
+  classifies the sample identically, which is what makes 0.15 a measurement rather
+  than a tuned guess.
 
-  Use those as starting points and re-tune. A hole is a lake if it is *either*
-  large *or* fat, and a gap if it is *both* small *and* thin.
+  The area term was kept at first, converted to 2.5 units², and then removed because
+  it cannot be justified: the holes it would additionally catch form a continuum with
+  no break (0.98, 2.00, 2.49, 2.58, 2.68, …), so 2.5 catches 3 of them, 5.0 catches
+  14 and 10.0 catches 48, all arbitrary. Worse, those holes have areas around 1–2.5
+  units², so the area term was catching *medium roundish* holes rather than the tiny
+  ones it was meant for — the ratio had already caught everything small.
+
+  `CoastlineService` warns if any hole lands inside the measured empty valley, since
+  the separation is what the threshold rests on. If that warning ever fires, the
+  ratio has stopped being a clean discriminator and needs rethinking, not nudging.
 
 **2d.** Coast rings need splitting at the points where Phase 3 attaches a tracer
 endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the noder
-do the splitting.
+do the splitting. Each ring is therefore added as one closed arc for now.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 5241 coast shells, 462
+lakes kept, 2632 holes discarded as gaps, giving 7140 arcs in total with the tracers.
+The discarded holes total 25.7 units² — mean 0.0097, largest 2.09 — against 85,696
+units² of kept lakes, largest 20,032. At 0.03% of all hole area the discards are
+digitizing slivers, not water.
+
+The union in 2b is the pipeline's slowest step at roughly 55 seconds for ~7300 rings.
+One-off, and not worth optimising until something downstream needs the time.
 
 ## Phase 3 — weld the loose ends
 

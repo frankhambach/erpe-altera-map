@@ -1,4 +1,4 @@
-// Copyright (c) Frank Hambach. All rights reserved.
+﻿// Copyright (c) Frank Hambach. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Tests.Services;
@@ -32,7 +32,7 @@ public class TracerServiceTests
         SvgDocument document = CreateDocument(
             ("Border_Tracers", CreateLine(0, 0, 10, 0)),
             ("Substate_Tracers", CreateLine(0, 5, 10, 5)));
-        ArcGraph arcGraph = new ArcGraph();
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         CreateService(coordinateSequenceFactory).AddArcs(document, arcGraph);
 
@@ -52,7 +52,7 @@ public class TracerServiceTests
                     new SvgMoveToSegment(false, new PointF(0, 0)),
                     new SvgLineSegment(false, new PointF(10, 0)),
                     new SvgLineSegment(false, new PointF(10, 10)))));
-        ArcGraph arcGraph = new ArcGraph();
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         CreateService(coordinateSequenceFactory).AddArcs(document, arcGraph);
 
@@ -68,7 +68,7 @@ public class TracerServiceTests
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
         SvgDocument document = CreateDocument(("Border_Tracers", CreateLine(0, 0, 10, 0)));
-        ArcGraph arcGraph = new ArcGraph();
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         CreateService(coordinateSequenceFactory).AddArcs(document, arcGraph);
 
@@ -89,7 +89,7 @@ public class TracerServiceTests
                     new SvgLineSegment(false, new PointF(10, 0)),
                     new SvgLineSegment(false, new PointF(10, 10)),
                     new SvgClosePathSegment(false))));
-        ArcGraph arcGraph = new ArcGraph();
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         CreateService(coordinateSequenceFactory).AddArcs(document, arcGraph);
 
@@ -110,7 +110,7 @@ public class TracerServiceTests
         SvgDocument document = CreateDocument(
             ("Country_Shapes", CreateLine(0, 0, 10, 0)),
             ("Rim", CreateLine(0, 5, 10, 5)));
-        ArcGraph arcGraph = new ArcGraph();
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         CreateService(coordinateSequenceFactory).AddArcs(document, arcGraph);
 
@@ -124,7 +124,7 @@ public class TracerServiceTests
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
         SvgDocument document = CreateLayer("Border_Tracers", CreateLine(0, 0, 10, 0), CreateLine(0, 5, 10, 5));
-        ArcGraph arcGraph = new ArcGraph();
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         CreateService(coordinateSequenceFactory).AddArcs(document, arcGraph);
 
@@ -147,7 +147,8 @@ public class TracerServiceTests
     public void AddArcs_ShouldThrowArgumentNullException_WhenDocumentIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
-        Action action = () => CreateService(coordinateSequenceFactory).AddArcs(null!, new ArcGraph());
+        Action action = () => CreateService(coordinateSequenceFactory)
+            .AddArcs(null!, new ArcGraph(coordinateSequenceFactory));
 
         action.Should().Throw<ArgumentNullException>();
     }
@@ -212,8 +213,6 @@ public class TracerServiceTests
 
     private static TracerService CreateService(CoordinateSequenceFactory coordinateSequenceFactory)
     {
-        return new TracerService(
-            new SvgApproximationService(coordinateSequenceFactory),
-            coordinateSequenceFactory);
+        return new TracerService(new SvgApproximationService(coordinateSequenceFactory));
     }
 }
