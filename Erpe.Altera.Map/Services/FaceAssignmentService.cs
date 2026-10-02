@@ -123,61 +123,21 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
             fused);
     }
 
-    // Water and land alternate with depth. A face nothing encloses is land; a face enclosed
-    // by land is a lake; an island in that lake is land again. The nesting comes from the
-    // hole structure rather than from the country shapes, so it holds whether or not the
-    // shapes were drawn with their lakes cut out.
+    // A face the lake shore alone bounds is water. Anything with a border or a sea coast in
+    // it is territory, however it happens to nest.
+    //
+    // Nesting cannot decide this. A lake with a border ending on its shore is not enclosed at
+    // all in the topological sense: the land faces around it take the lake shore into their
+    // own boundaries, so no face carries the lake as a hole and there is nothing to be inside
+    // of. That is the case for 126 of the 462 lakes here, including every large one. Nesting
+    // also mistakes an enclave, which is land enclosed by land, for water.
     private static bool[] GetWater(ArcGraph arcGraph)
     {
-        Dictionary<DirectedArc, int> owners = new Dictionary<DirectedArc, int>();
-        for (int i = 0; i < arcGraph.Faces.Count; ++i)
-        {
-            foreach (DirectedArc directed in arcGraph.Faces[i].Shell)
-            {
-                owners[directed] = i;
-            }
-        }
-
-        // A face sits inside another when the ring it is bounded by appears as one of that
-        // face's holes. Neither the ocean nor a hole is itself a face, so a face that is not
-        // named by any hole is one the open sea surrounds, and that is where depth starts.
-        int[] parents = [.. arcGraph.Faces.Select(_ => -1)];
-        for (int i = 0; i < arcGraph.Faces.Count; ++i)
-        {
-            foreach (ImmutableArray<DirectedArc> hole in arcGraph.Faces[i].Holes.Where(hole => !hole.IsEmpty))
-            {
-                DirectedArc inside = new DirectedArc(hole[0].Arc, !hole[0].IsReversed);
-                if (owners.TryGetValue(inside, out int enclosed))
-                {
-                    parents[enclosed] = i;
-                }
-            }
-        }
-
-        int[] depths = [.. arcGraph.Faces.Select(_ => -1)];
-        for (int i = 0; i < depths.Length; ++i)
-        {
-            GetDepth(parents, depths, i);
-        }
-
-        return [.. depths.Select(depth => (depth % 2) == 1)];
-    }
-
-    private static int GetDepth(int[] parents, int[] depths, int index)
-    {
-        if (depths[index] >= 0)
-        {
-            return depths[index];
-        }
-
-        // Guard against a cycle, which would mean the hole structure is inconsistent.
-        depths[index] = 0;
-        if (parents[index] >= 0)
-        {
-            depths[index] = GetDepth(parents, depths, parents[index]) + 1;
-        }
-
-        return depths[index];
+        return
+        [
+            .. arcGraph.Faces.Select(
+                face => !face.Shell.IsEmpty && face.Shell.All(directed => directed.Arc.Kind == ArcKind.Lake)),
+        ];
     }
 
     private static STRtree<(Polygon Polygon, Country Country)> BuildShapeIndex(IEnumerable<Country> countries)
@@ -221,22 +181,51 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
             }
         }
 
+        // Repeated until nothing moves, because a run of unclaimed faces can be several deep:
+        // the innermost only gains an owned neighbour once the one outside it has been
+        // absorbed, so a single pass leaves whatever it happened to reach first.
         int absorbed = 0;
-        foreach (Face face in unclaimed)
+        List<Face> remaining = [.. unclaimed];
+        while (remaining.Count > 0)
         {
-            Country? owner = face.Shell
-                .Select(directed => new DirectedArc(directed.Arc, !directed.IsReversed))
-                .Where(owners.ContainsKey)
-                .GroupBy(directed => owners[directed].Owner)
-                .Where(grouping => grouping.Key != null)
-                .OrderByDescending(grouping => grouping.Sum(directed => GetLength(directed)))
-                .Select(grouping => grouping.Key)
-                .FirstOrDefault();
-            if (owner != null)
+            List<Face> next = [];
+            foreach (Face face in remaining)
             {
+                Country? owner = face.Shell
+                    .Select(directed => new DirectedArc(directed.Arc, !directed.IsReversed))
+                    .Where(owners.ContainsKey)
+                    .GroupBy(directed => owners[directed].Owner)
+                    .Where(grouping => grouping.Key != null)
+                    .OrderByDescending(grouping => grouping.Sum(directed => GetLength(directed)))
+                    .Select(grouping => grouping.Key)
+                    .FirstOrDefault();
+                if (owner == null)
+                {
+                    next.Add(face);
+                    continue;
+                }
+
                 face.Owner = owner;
                 ++absorbed;
             }
+
+            if (next.Count == remaining.Count)
+            {
+                remaining = next;
+                break;
+            }
+
+            remaining = next;
+        }
+
+        // A face left here has no owned neighbour at all, which means nothing around it is
+        // territory either. It is unclaimed land in open water, and there is no neighbour to
+        // give it to.
+        foreach (Face face in remaining)
+        {
+            Log.Warning(
+                "Face {FaceId} is claimed by no country and borders none, so nothing can absorb it.",
+                face.Id);
         }
 
         return absorbed;

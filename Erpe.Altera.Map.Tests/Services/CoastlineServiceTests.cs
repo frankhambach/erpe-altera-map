@@ -1,4 +1,4 @@
-// Copyright (c) Frank Hambach. All rights reserved.
+﻿// Copyright (c) Frank Hambach. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Tests.Services;
@@ -55,7 +55,7 @@ public class CoastlineServiceTests
 
     [AutoCustomizedData]
     [Test]
-    public void AddArcs_ShouldKeepHoleAsCoast_WhenHoleIsFatEnoughToBeALake(
+    public void AddArcs_ShouldKeepHoleAsALakeShore_WhenHoleIsFatEnoughToBeALake(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
@@ -67,7 +67,10 @@ public class CoastlineServiceTests
             arcGraph);
 
         arcGraph.Arcs.Should().HaveCount(2);
-        arcGraph.Arcs.Should().OnlyContain(arc => arc.Kind == ArcKind.Coast);
+
+        // The shell is sea coast and the hole is a lake shore. Face assignment later uses
+        // that difference to tell water from an enclave.
+        arcGraph.Arcs.Select(arc => arc.Kind).Should().BeEquivalentTo([ArcKind.Coast, ArcKind.Lake]);
     }
 
     [AutoCustomizedData]

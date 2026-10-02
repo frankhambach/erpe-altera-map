@@ -1,4 +1,4 @@
-// Copyright (c) Frank Hambach. All rights reserved.
+﻿// Copyright (c) Frank Hambach. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Tests.Services;
@@ -46,7 +46,7 @@ public class FaceAssignmentServiceTests
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 30);
-        AddRing(arcGraph, coordinateSequenceFactory, 10, 10, 10);
+        AddRing(arcGraph, coordinateSequenceFactory, 10, 10, 10, ArcKind.Lake);
         new TopologyService(geometryFactory).BuildFaces(arcGraph);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 30);
 
@@ -66,7 +66,7 @@ public class FaceAssignmentServiceTests
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 60);
-        AddRing(arcGraph, coordinateSequenceFactory, 10, 10, 40);
+        AddRing(arcGraph, coordinateSequenceFactory, 10, 10, 40, ArcKind.Lake);
         AddRing(arcGraph, coordinateSequenceFactory, 20, 20, 20);
         new TopologyService(geometryFactory).BuildFaces(arcGraph);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 60);
@@ -135,9 +135,10 @@ public class FaceAssignmentServiceTests
         CoordinateSequenceFactory coordinateSequenceFactory,
         double x,
         double y,
-        double size)
+        double size,
+        ArcKind kind = ArcKind.Coast)
     {
-        arcGraph.AddArc(ArcKind.Coast, coordinateSequenceFactory.Create(CreateRing(x, y, size, size)));
+        arcGraph.AddArc(kind, coordinateSequenceFactory.Create(CreateRing(x, y, size, size)));
     }
 
     private static Coordinate[] CreateRing(double x, double y, double width, double height)

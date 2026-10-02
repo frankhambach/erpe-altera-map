@@ -360,17 +360,26 @@ exclude their lakes.
 
 ## Phase 5 — assign faces to countries
 
-**5a. Land or water comes from the nesting, not from the shapes.** A face nothing
-encloses is land; a face enclosed by land is a lake; an island in that lake is land
-again. The enclosure relation comes from Phase 4's holes — a face sits inside another
-when the ring bounding it appears as one of that face's holes — so the answer holds
-whether or not the country shapes were drawn with their lakes cut out. They were not:
-the shapes are solid, so a point test alone would hand every lake to the country around
-it.
+**5a. Water is told from land by what bounds a face, not by how it nests.** Lake shores
+are carried as their own `ArcKind.Lake`, kept apart from the sea coast, and a face the
+lake shore alone bounds is water. Anything with a border or a sea coast in it is
+territory.
+
+Nesting was tried first and does not work, for two separate reasons:
+
+- **A lake with a border ending on its shore is not enclosed at all**, topologically. The
+  land faces around it take the lake shore into their own boundaries, so no face carries
+  the lake as a hole and there is nothing for it to be inside of. That is 126 of the 462
+  lakes, including every large one — 82% of all lake area. No amount of fixing the
+  containment test helps, because the ring it would look for does not exist.
+- **An enclave is land enclosed by land**, so depth parity calls it water, and everything
+  nested inside it is inverted too.
+
+Provenance has neither problem and needs no geometry at all. 455 of 462 lakes come out as
+water, against 336 under nesting.
 
 **Lakes are left unowned.** They are water, not territory. With the tracers clipped in
-Phase 2 each lake is a single face, so there is nothing to divide and no rule is needed
-beyond leaving them out.
+Phase 2 each lake is a single face, so there is nothing to divide.
 
 **5b. Faces are matched to countries, not to shapes.** A country is made of many shapes
 and they routinely overlap each other, so counting shapes reports almost every face as
@@ -396,8 +405,18 @@ countries, 415 left as water, 160 of 168 unclaimed faces absorbed, and exactly *
 genuine missing tracers reported — Martinique/Caribbea at 57.6 units² and
 Caribbea/Iouanorre at 27.3, both small Caribbean islands.
 
-Still open: 415 water faces against 462 kept lakes, and 8 unclaimed faces that found no
-owned neighbour to join.
+Absorption runs to a fixpoint, because a run of unclaimed faces can be several deep: the
+innermost only gains an owned neighbour once the one outside it has been absorbed. That
+took the unclaimed count from 168 to 49.
+
+Two residues remain, both reported rather than papered over:
+
+- **7 lakes of 462 are still not recognised as water**, and one of them is the largest
+  lake on the map. That one is explained: it holds the single tracer that survives the
+  Phase 2 clip, 0.39 units of it, which puts a border arc in the lake face's boundary. Fix
+  the clip residue and the lake follows. The other six are small, 208 units² and below.
+- **8 faces are claimed by no country and border none**, so nothing can absorb them. They
+  are unclaimed land whose every neighbour is also unclaimed or water.
 
 ## Phase 6 — assemble and write
 

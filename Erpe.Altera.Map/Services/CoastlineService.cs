@@ -93,7 +93,7 @@ public sealed class CoastlineService : ICoastlineService
                 }
                 else
                 {
-                    arcGraph.AddArc(ArcKind.Coast, hole.CoordinateSequence);
+                    arcGraph.AddArc(ArcKind.Lake, hole.CoordinateSequence);
                     lakes.Add(this.geometryFactory.CreatePolygon(hole));
                     ++lakeCount;
                 }
@@ -181,9 +181,9 @@ public sealed class CoastlineService : ICoastlineService
         double removed = 0.0;
         foreach (Arc arc in originals)
         {
-            Polygon[] overlapping = arc.Kind == ArcKind.Coast
-                ? []
-                : lakeIndex.Query(new Envelope(arc.GetFullCoordinates())).ToArray();
+            Polygon[] overlapping = arc.Kind is ArcKind.Border or ArcKind.Substate
+                ? lakeIndex.Query(new Envelope(arc.GetFullCoordinates())).ToArray()
+                : [];
             if (overlapping.Length == 0)
             {
                 arcGraph.Arcs.Add(arc);
@@ -214,7 +214,7 @@ public sealed class CoastlineService : ICoastlineService
 
         // No tracer may be left inside a lake, or it will shave a sliver off when the faces
         // are traced and the lake will end up partly owned by a country.
-        double[] residues = arcGraph.Arcs.Where(arc => arc.Kind != ArcKind.Coast)
+        double[] residues = arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Border or ArcKind.Substate)
             .Select(arc => this.geometryFactory.CreateLineString(arc.GetFullCoordinates()))
             .Select(line => lakeIndex.Query(line.EnvelopeInternal)
                 .Sum(lake => line.Intersection(lake).Length))
