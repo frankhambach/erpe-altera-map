@@ -53,6 +53,7 @@ internal static class Program
             services.AddSingleton(NtsGeometryServices.Instance.CreateGeometryFactory());
             services.AddTransient<ISvgApproximationService, SvgApproximationService>();
             services.AddTransient<IProjectionService, WinkelTripelProjectionService>();
+            services.AddTransient<ITracerService, TracerService>();
             services.AddTransient<ITopologyService, TopologyService>();
             services.AddTransient<ICorrectionService, CorrectionService>();
             services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();

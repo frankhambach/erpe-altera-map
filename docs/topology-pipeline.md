@@ -139,6 +139,15 @@ coincides with a national border the two coincident arcs must collapse to one;
 building national topology first and substates against it afterwards would not
 achieve that.
 
+`ArcGraph` owns identity, through `AddNode` and `AddArc` with monotonic counters, so
+that the coast arcs added in Phase 2 share one numbering with the tracer arcs and
+node identifiers stay stable once welding starts removing merged nodes.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 1437 arcs — 1065 border,
+372 substate — on 2873 nodes, matching an independent count of the file exactly. The
+node total is one short of twice the arc count, which confirms the single closed
+subpath is the only one. 26 subpaths are dropped by the 0.1-unit filter.
+
 ## Phase 2 — build the coastline
 
 New `ICoastlineService` / `CoastlineService`. The country shapes are used for

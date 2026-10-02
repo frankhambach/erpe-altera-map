@@ -21,6 +21,8 @@ using NetTopologySuite.Features;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.IO.Converters;
 
+using Serilog;
+
 using Svg;
 
 internal sealed class ConvertCommand : Command
@@ -54,9 +56,12 @@ internal sealed class ConvertCommand : Command
 
     private readonly ITopologyService topologyService;
 
+    private readonly ITracerService tracerService;
+
     public ConvertCommand(
         ISvgApproximationService svgApproximationService,
         IProjectionService projectionService,
+        ITracerService tracerService,
         ITopologyService topologyService,
         ICorrectionService correctionService,
         ISimplificationService simplificationService,
@@ -65,6 +70,7 @@ internal sealed class ConvertCommand : Command
     {
         this.svgApproximationService = svgApproximationService;
         this.projectionService = projectionService;
+        this.tracerService = tracerService;
         this.topologyService = topologyService;
         this.correctionService = correctionService;
         this.simplificationService = simplificationService;
@@ -249,6 +255,17 @@ internal sealed class ConvertCommand : Command
     {
         SvgDocument document = SvgDocument.Open<SvgDocument>(inFile.FullName);
         Envelope sourceEnvelope = this.GetEnvelope(document);
+
+        // The arc graph is not yet consumed; shapes still drive the output. Phases 2 to 6
+        // of docs/topology-pipeline.md build the partition on top of it.
+        ArcGraph arcGraph = new ArcGraph();
+        this.tracerService.AddArcs(document, arcGraph);
+        Log.Information(
+            "Read {ArcCount} tracer arcs ({BorderCount} border, {SubstateCount} substate) on {NodeCount} nodes.",
+            arcGraph.Arcs.Count,
+            arcGraph.Arcs.Count(arc => arc.Kind == ArcKind.Border),
+            arcGraph.Arcs.Count(arc => arc.Kind == ArcKind.Substate),
+            arcGraph.Nodes.Count);
 
         SvgElement[] shapesElements = document.Descendants()
             .Where(element => element.ID is "Country_Shapes" or "Substate_Shapes")
