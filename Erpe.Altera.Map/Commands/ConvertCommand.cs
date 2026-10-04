@@ -32,6 +32,12 @@ internal sealed class ConvertCommand : Command
     // ten with latitude once unprojected. This is the SVG-unit equivalent of the
     // 0.001 degrees used before, and Phase 3 of docs/topology-pipeline.md replaces it
     // with the measured weld tolerance of 0.5 units.
+    // Six, not four. Four decimal degrees is about 0.0017 SVG units, some seventeen times
+    // coarser than the grid the graph is noded on, so distinct nodes would land on top of
+    // each other and leave degenerate rings behind. The file grows; the low and medium
+    // outputs are where size is managed.
+    private const int OutputDecimals = 6;
+
     private const double SnapTolerance = 0.02;
 
     // How far a loose arc end may reach to find what it was drawn to meet, in SVG units.
@@ -51,6 +57,8 @@ internal sealed class ConvertCommand : Command
                     new GeoJsonConverterFactory(),
                 },
         };
+
+    private readonly IAssemblyService assemblyService;
 
     private readonly ICoastlineService coastlineService;
 
@@ -75,6 +83,7 @@ internal sealed class ConvertCommand : Command
         IProjectionService projectionService,
         ITracerService tracerService,
         ICoastlineService coastlineService,
+        IAssemblyService assemblyService,
         ITopologyService topologyService,
         ICorrectionService correctionService,
         IFaceAssignmentService faceAssignmentService,
@@ -86,6 +95,7 @@ internal sealed class ConvertCommand : Command
         this.projectionService = projectionService;
         this.tracerService = tracerService;
         this.coastlineService = coastlineService;
+        this.assemblyService = assemblyService;
         this.topologyService = topologyService;
         this.correctionService = correctionService;
         this.faceAssignmentService = faceAssignmentService;
@@ -329,12 +339,19 @@ internal sealed class ConvertCommand : Command
 
         this.topologyService.BuildFaces(arcGraph);
 
-        // The national layer only. A substate shape lies inside its country's shape, so
-        // passing both would report every substate face as belonging to two countries at
-        // once. Substates subdivide these faces further and need a pass of their own.
-        this.faceAssignmentService.Assign(
-            arcGraph,
-            countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederatedState));
+        // One pass per layer, because a substate shape lies inside its country's shape and
+        // passing both at once would report every substate face as belonging to two
+        // countries. The national pass is assembled before the substate pass runs, since
+        // assigning a face sets the one owner it carries.
+        Country[] national = countries
+            .Where(country => country.Type is CountryType.UnitaryState or CountryType.FederatedState)
+            .ToArray();
+        Country[] substates = countries.Where(country => country.Type is CountryType.FederalState).ToArray();
+
+        this.faceAssignmentService.Assign(arcGraph, national, true);
+        this.assemblyService.Assemble(arcGraph, national);
+        this.faceAssignmentService.Assign(arcGraph, substates, false);
+        this.assemblyService.Assemble(arcGraph, substates);
 
         this.Unproject(countries, sourceEnvelope);
 
@@ -390,8 +407,8 @@ internal sealed class ConvertCommand : Command
         public void Filter(CoordinateSequence seq, int i)
         {
             Coordinate coordinate = seq.GetCoordinate(i);
-            coordinate.X = Math.Round(coordinate.X, 4);
-            coordinate.Y = Math.Round(coordinate.Y, 4);
+            coordinate.X = Math.Round(coordinate.X, OutputDecimals);
+            coordinate.Y = Math.Round(coordinate.Y, OutputDecimals);
             seq.SetOrdinate(i, Ordinate.X, coordinate.X);
             seq.SetOrdinate(i, Ordinate.Y, coordinate.Y);
         }

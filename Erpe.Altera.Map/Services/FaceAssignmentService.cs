@@ -32,7 +32,7 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         this.geometryFactory = geometryFactory;
     }
 
-    public void Assign(ArcGraph arcGraph, IEnumerable<Country> countries)
+    public void Assign(ArcGraph arcGraph, IEnumerable<Country> countries, bool absorbUnclaimed)
     {
         ArgumentNullException.ThrowIfNull(arcGraph);
         ArgumentNullException.ThrowIfNull(countries);
@@ -113,7 +113,10 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
             }
         }
 
-        int absorbed = Absorb(arcGraph, unclaimed);
+        // Only where the countries are meant to cover everything between them. Substates
+        // cover a few countries and nothing else, so absorbing there would pull whole
+        // foreign countries into whichever substate happened to border them.
+        int absorbed = absorbUnclaimed ? Absorb(arcGraph, unclaimed) : 0;
 
         Log.Information(
             "Assigned {Assigned} faces to countries, left {Water} as water covering {WaterArea:0.0} square "

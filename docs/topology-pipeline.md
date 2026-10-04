@@ -427,32 +427,53 @@ neighbour is also unclaimed or water.
 
 ## Phase 6 — assemble and write
 
-**6a.** Per country, build the `MultiPolygon` from its faces' **arcs**, not by
-unioning polygons. An overlay operation here would reintroduce the floating-point
-mismatch the whole pipeline exists to avoid.
+**6a. Each country's geometry is rebuilt from the faces it was assigned**, replacing the
+shapes it was drawn with. From here on a border exists once and both countries either
+side of it are built from the same arc coordinates.
 
-**6b. Unproject once per unique node, memoized.** Every arc references nodes by
-identity, so a memoized `Rescale` + `Unproject` per node guarantees that both
-neighbours of a border receive literally the same output coordinates. This is the
-step that makes "borders match exactly" a property of the construction rather than
-something to verify afterwards.
+A country holds several faces wherever a substate border cuts through it, so the faces
+are dissolved back together. Unioning geometry that already shares its edges exactly
+follows those edges rather than recomputing them, so the borders with the neighbours come
+through untouched.
 
-**6c. Output precision.** `RoundCoordinateSequenceFilter` rounds to 4 decimal
-degrees ≈ 0.0017 SVG units, which is ~17× coarser than the Phase 0a noding grid —
-distinct nodes would collide and produce degenerate rings. Raise output precision to
-6 decimals; the file grows, and the `-low` / `-medium` outputs are where size is
-managed. Coarsening the noding grid to match is the alternative, but Phase 0a
-rejected that on measurement.
+**Face boundaries have to be unlooped first.** A face boundary may return to a node it has
+already passed through, where the face is pinched to a point or a hole touches its shell.
+That is one ring in the graph but it crosses itself as geometry, and
+NetTopologySuite rejects it. Cutting the ring at every such point into the lobes it is
+really made of took the losses from **131 faces covering 1,363,675 square units — 23% of
+the land — down to 8 faces and 61,230**. This is the same unlooping the drawn shapes get
+in 2a, for the same reason.
 
-**6d. Simplification must become arc-based.** `VisvalingamSimplificationService`
-currently simplifies each polygon independently, which would give the two sides of
-a border *different* simplified geometry and destroy every guarantee above.
-Simplify each **arc** once and rebuild polygons from the simplified arcs. This
-applies to the existing `-low` (0.01) and `-medium` (0.001) outputs.
+**6b.** Unprojection is memoized per coordinate, as set up in Phase 0b, so both sides of a
+border receive literally the same output values.
 
-**6e. TopoJSON.** With nodes, arcs and per-arc face adjacency already in hand, the
-writer is a direct serialisation: emit the arc coordinate lists, then each country
-as indices into them. Worth doing as its own phase once GeoJSON output is verified.
+**6c. Output precision is six decimals, not four.** Four decimal degrees is about 0.0017
+SVG units, some seventeen times coarser than the noding grid, so distinct nodes would land
+on top of each other and leave degenerate rings. Sharing itself survives either way, since
+identical values round identically; what four decimals costs is degeneracy.
+
+**One pass per layer.** A substate shape lies inside its country's shape, so the national
+pass is assigned and assembled before the substate pass runs — a face carries one owner.
+**Absorption runs only for the national layer**, where the countries are meant to cover
+everything between them. Left on for substates it pulled 1019 faces, whole foreign
+countries among them, into whichever substate happened to border them.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 6129 shapes assembled for 1196
+countries from the national pass, 706 for the substate pass, and all five GeoJSON outputs
+written.
+
+Still to do:
+
+- **8 faces covering 61,230 square units, about 1% of the land, still trace to a ring that
+  crosses itself** and are left out. Unlooping does not reach these, so they are not simple
+  self-touches; the likely cause is arcs that overlap collinearly rather than crossing at a
+  point, which is the same defect the lake clip fixed in 2c-bis but for the sea coast.
+- **6d, arc-based simplification.** `VisvalingamSimplificationService` still simplifies each
+  polygon independently, which gives the two sides of a border different geometry and
+  undoes the guarantee. The `-low` and `-medium` outputs are affected.
+- **6e, TopoJSON.**
+- **The exact-sharing check in Phase 7 has not been run.** Until it has, assembling by
+  union rather than by walking the arcs is an assumption, not a verified property.
 
 ## Phase 7 — verification
 

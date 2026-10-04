@@ -31,7 +31,7 @@ public class FaceAssignmentServiceTests
         new TopologyService(geometryFactory).BuildFaces(arcGraph);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 30);
 
-        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country]);
+        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
 
         arcGraph.Faces.Should().ContainSingle().Which.Owner.Should().BeSameAs(country);
     }
@@ -50,7 +50,7 @@ public class FaceAssignmentServiceTests
         new TopologyService(geometryFactory).BuildFaces(arcGraph);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 30);
 
-        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country]);
+        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
 
         arcGraph.Faces.Should().HaveCount(2);
         arcGraph.Faces.Count(face => face.Owner == null).Should().Be(1, "the lake stays water");
@@ -71,7 +71,7 @@ public class FaceAssignmentServiceTests
         new TopologyService(geometryFactory).BuildFaces(arcGraph);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 60);
 
-        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country]);
+        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
 
         arcGraph.Faces.Should().HaveCount(3);
         arcGraph.Faces.Count(face => face.Owner == country).Should().Be(2, "the outer land and the island");
@@ -97,7 +97,7 @@ public class FaceAssignmentServiceTests
         // Only the northern half is covered by a country; the southern half is the gap.
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 60, 40);
 
-        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country]);
+        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
 
         arcGraph.Faces.Should().HaveCount(2);
         arcGraph.Faces.Should().OnlyContain(face => face.Owner == country);
@@ -110,7 +110,7 @@ public class FaceAssignmentServiceTests
     {
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
 
-        Action action = () => new FaceAssignmentService(geometryFactory).Assign(null!, []);
+        Action action = () => new FaceAssignmentService(geometryFactory).Assign(null!, [], true);
 
         action.Should().Throw<ArgumentNullException>();
     }
