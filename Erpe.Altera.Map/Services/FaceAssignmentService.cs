@@ -41,6 +41,7 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         STRtree<(Polygon Polygon, Country Country)> shapes = BuildShapeIndex(countries);
 
         int water = 0;
+        double waterArea = 0.0;
         int assigned = 0;
         int fused = 0;
         List<Face> unclaimed = [];
@@ -49,6 +50,8 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
             Face face = arcGraph.Faces[i];
             if (isWater[i])
             {
+                waterArea += Math.Abs(this.CreatePolygon(face.Shell).Area);
+
                 // Lakes are water, not territory. Nothing claims them, so they are simply
                 // left out of the countries rather than being split between them.
                 ++water;
@@ -113,11 +116,13 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         int absorbed = Absorb(arcGraph, unclaimed);
 
         Log.Information(
-            "Assigned {Assigned} faces to countries, left {Water} as water and absorbed {Absorbed} of "
+            "Assigned {Assigned} faces to countries, left {Water} as water covering {WaterArea:0.0} square "
+            + "units and absorbed {Absorbed} of "
             + "{Unclaimed} unclaimed faces into their neighbours. {Fused} faces lie in two countries at once, "
             + "all but the reported ones too small to matter.",
             assigned,
             water,
+            waterArea,
             absorbed,
             unclaimed.Count,
             fused);

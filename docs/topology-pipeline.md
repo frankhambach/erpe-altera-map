@@ -219,9 +219,17 @@ the countries around it. Measured before the fix: 108 sliver faces, 751 units²,
 of all lake area, across 35 lakes.
 
 Clipping here rather than afterwards means the trimmed end is welded onto the lake ring
-in Phase 3 and the lake stays a single face. 379 tracers are trimmed, removing 31.95
-units of line in all. A check afterwards reports any tracer still inside a lake: one
-remains, by 0.39 units, which is logged rather than forced.
+in Phase 3 and the lake stays a single face. 383 tracers are trimmed, removing 40.61
+units of line in all, and a check afterwards reports any tracer still inside a lake.
+
+**Clip against the lake grown by a hair, not the lake as drawn.** A border that follows
+the shore sits within rounding of it rather than cleanly inside, so differencing the lake
+itself leaves it in place — it then exists twice over, once as the lake shore and once as
+the border, and the face traversal may pick up either. That is what left one tracer
+inside a lake, and what put border arcs into the boundary of the largest lake's face so
+that it came out as land. Growing by 0.001 units, about 6 m against a drawing resolution
+of 1.75 units, takes those with it. A border that merely ends at the shore is pulled back
+by the same hair and welded onto the ring again in Phase 3.
 
 **2d.** Coast rings need splitting at the points where Phase 3 attaches a tracer
 endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the noder
@@ -409,14 +417,13 @@ Absorption runs to a fixpoint, because a run of unclaimed faces can be several d
 innermost only gains an owned neighbour once the one outside it has been absorbed. That
 took the unclaimed count from 168 to 49.
 
-Two residues remain, both reported rather than papered over:
+Water comes to 465 faces covering 85,710.6 square units, against the 85,695.5 of lake the
+coastline measured — a difference of 0.018%, so every lake is accounted for. The run logs
+both figures side by side, which is the check worth watching.
 
-- **7 lakes of 462 are still not recognised as water**, and one of them is the largest
-  lake on the map. That one is explained: it holds the single tracer that survives the
-  Phase 2 clip, 0.39 units of it, which puts a border arc in the lake face's boundary. Fix
-  the clip residue and the lake follows. The other six are small, 208 units² and below.
-- **8 faces are claimed by no country and border none**, so nothing can absorb them. They
-  are unclaimed land whose every neighbour is also unclaimed or water.
+One residue remains, reported rather than papered over: **8 faces are claimed by no
+country and border none**, so nothing can absorb them. They are unclaimed land whose every
+neighbour is also unclaimed or water.
 
 ## Phase 6 — assemble and write
 

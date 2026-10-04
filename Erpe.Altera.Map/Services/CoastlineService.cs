@@ -44,6 +44,10 @@ public sealed class CoastlineService : ICoastlineService
     // above this is a real stretch of border still sitting in the water.
     private const double ResidueTolerance = 1E-3;
 
+    // How far past the shore to clip, in SVG units: about 6 m, far below the drawing's own
+    // resolution of roughly 1.75 units between points.
+    private const double ClipMargin = 1E-3;
+
     private readonly CoordinateSequenceFactory coordinateSequenceFactory;
 
     private readonly GeometryFactory geometryFactory;
@@ -104,12 +108,14 @@ public sealed class CoastlineService : ICoastlineService
 
         Log.Information(
             "Built {ShellCount} coast shells, kept {LakeCount} lakes and discarded {GapCount} holes as gaps, "
-            + "enclosing {Area:0.0} square units of land. Trimmed {Clipped} tracers back to the lake shore, "
+            + "enclosing {Area:0.0} square units of land and {LakeArea:0.0} of lake. Trimmed {Clipped} "
+            + "tracers back to the lake shore, "
             + "removing {Removed:0.00} units of line.",
             land.Length,
             lakeCount,
             gapCount,
             land.Sum(polygon => polygon.Area),
+            lakes.Sum(lake => lake.Area),
             clipped,
             removed);
 
@@ -181,19 +187,29 @@ public sealed class CoastlineService : ICoastlineService
         double removed = 0.0;
         foreach (Arc arc in originals)
         {
-            Polygon[] overlapping = arc.Kind is ArcKind.Border or ArcKind.Substate
-                ? lakeIndex.Query(new Envelope(arc.GetFullCoordinates())).ToArray()
-                : [];
-            if (overlapping.Length == 0)
+            if (arc.Kind is not (ArcKind.Border or ArcKind.Substate))
             {
                 arcGraph.Arcs.Add(arc);
                 continue;
             }
 
             LineString line = this.geometryFactory.CreateLineString(arc.GetFullCoordinates());
+            Polygon[] overlapping = lakeIndex.Query(line.EnvelopeInternal).ToArray();
+            if (overlapping.Length == 0)
+            {
+                arcGraph.Arcs.Add(arc);
+                continue;
+            }
+
+            // Against a slightly grown lake, not the lake itself. A border that follows the
+            // shore sits within rounding of it rather than cleanly inside, so differencing
+            // the lake as drawn leaves it in place: it then appears twice over, once as the
+            // lake shore and once as the border, and the face traversal can pick up either.
+            // Growing by a hair takes those with it. A border that merely ends at the shore
+            // is pulled back by the same hair and welded onto the ring again in Phase 3.
             Geometry trimmed = overlapping.Aggregate(
                 (Geometry)line,
-                (current, lake) => current.IsEmpty ? current : current.Difference(lake));
+                (current, lake) => current.IsEmpty ? current : current.Difference(lake.Buffer(ClipMargin)));
             if (Math.Abs(trimmed.Length - line.Length) < DegenerateLength)
             {
                 arcGraph.Arcs.Add(arc);
@@ -221,6 +237,7 @@ public sealed class CoastlineService : ICoastlineService
             .Where(residue => residue > ResidueTolerance)
             .OrderByDescending(residue => residue)
             .ToArray();
+
         if (residues.Length > 0)
         {
             Log.Warning(
