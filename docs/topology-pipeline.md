@@ -502,21 +502,46 @@ reports the shell as enclosing its own outline and no island ever reaches the oc
 matching an independent count exactly — and 7182 faces traced with 439 holes, 5188
 outlines going to the ocean.
 
-Two invariants are checked in the run and both hold:
+Two invariants. Both are now checked in the run; **one of them is failing.**
 
-- **Every half-edge lies in exactly one ring.** This is what "the faces tile" means,
-  and it is checked directly rather than inferred from areas. It is the first thing to
-  look at if a face ever comes out wrong.
-- **The face areas account for the land.** Faces cover 5,834,924 square units against
-  the 5,769,621 the coastline enclosed. The 65,303 excess is the 23 lakes (462 kept
-  minus 439 holes) that a border crosses: splitting such a lake's ring means the land
-  around it routes through the lake rather than carrying it as a hole, so the lake's
-  halves become faces in their own right. A total running *under* the land area would
-  mean a face had failed to close, and is the failure to watch for.
+- **Every half-edge lies in exactly one ring.** This is what "the faces tile" means, and
+  it is checked directly rather than inferred from areas. It holds, and it is the first
+  thing to look at if a face ever comes out wrong.
+- **The face areas account for the land.** This was written up as checked and holding, and
+  it was neither: the run logged the face total and nothing compared it to anything. The
+  comparison was made by hand, once, when the excess was 65,303 units of lake that a border
+  crossed - which the clipping in 2c-bis has since removed.
 
-Those 23 lake faces are the one thing Phase 5 has to handle deliberately: they are
-water, but they sit inside a country shape and so will label as land unless the shapes
-exclude their lakes.
+  `ICoastlineService.AddArcs` now returns what the faces have to come to - the land, plus
+  every hole discarded as a gap since nothing bounds those any more, plus every lake since
+  a lake is a face of its own as well as a hole in the land around it - and `BuildFaces`
+  checks itself against it.
+
+  **It fails by 22,376.5 square units, 0.382% of the land**, and the comment in the code
+  said all along what that means: a face has failed to close. That land is inside no face
+  at all, so no country can be given it, and it is why Maharath, Sanjan, Siam, Dumarune and
+  Sulka come out of the pipeline with no territory. Maharath measures 6,942.5 of its 6,946.9
+  units uncovered and Sanjan 632.7 of 632.9.
+
+  `MaximumAreaShortfall` is 0.1%, which is not zero because the signed area of a shell that
+  crosses itself understates the ground it covers and four of those exist. The figure to
+  watch once the closing failure is fixed is whatever those four leave behind.
+
+**The cause is zero-length arcs.** Welding and splitting leave two *distinct* nodes at one
+identical coordinate - 44 coordinates carry more than one node - and the 50 arcs joining
+such a pair have no length and so no direction. `GetDepartureAngle` falls back to a
+coordinate equal to the start when it can find no different one, so `Atan2(0, 0)` makes a
+zero-length arc claim to leave at angle 0 whatever its real direction. That poisons the
+clockwise order at the node, 4b takes the wrong turn, and the boundary of the region gets
+walked into the outline of the landmass instead of closing into a face of its own. Caught
+in the act around Maharath, where the 314-arc continental outline runs through the window
+and carries arc 10111 twice, once each way, so that arc separates nothing.
+
+A separate hazard found looking for this one: **109 nodes have two half-edges leaving at
+genuinely equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore
+arbitrary. One of them, node 633 at 2440.35, 857.64, sits inside the face dropped for
+Avanarsuaq. Breaking those ties properly needs the arcs compared further along than their
+first vertex.
 
 ## Phase 5 — assign faces to countries
 

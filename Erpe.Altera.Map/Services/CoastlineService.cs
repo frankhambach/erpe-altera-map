@@ -60,7 +60,11 @@ public sealed class CoastlineService : ICoastlineService
         this.coordinateSequenceFactory = geometryFactory.CoordinateSequenceFactory;
     }
 
-    public void AddArcs(IEnumerable<Polygon> polygons, ArcGraph arcGraph)
+    // Returns the area the faces traced from this graph have to come to, which is what
+    // Phase 4 checks itself against: the land, plus every hole that was discarded as a gap
+    // since nothing bounds those any more, plus every lake, since a lake is a face of its
+    // own as well as a hole in the land around it.
+    public double AddArcs(IEnumerable<Polygon> polygons, ArcGraph arcGraph)
     {
         ArgumentNullException.ThrowIfNull(polygons);
         ArgumentNullException.ThrowIfNull(arcGraph);
@@ -78,6 +82,7 @@ public sealed class CoastlineService : ICoastlineService
         List<Polygon> lakes = [];
         int lakeCount = 0;
         int gapCount = 0;
+        double gapArea = 0.0;
         int ambiguousCount = 0;
         foreach (Polygon polygon in land)
         {
@@ -94,6 +99,7 @@ public sealed class CoastlineService : ICoastlineService
                 if (ratio < MaximumGapAreaToLengthRatio)
                 {
                     ++gapCount;
+                    gapArea += this.geometryFactory.CreatePolygon(hole).Area;
                 }
                 else
                 {
@@ -128,6 +134,8 @@ public sealed class CoastlineService : ICoastlineService
                 GapRatioUpperBound,
                 LakeRatioLowerBound);
         }
+
+        return land.Sum(polygon => polygon.Area) + gapArea + lakes.Sum(lake => lake.Area);
     }
 
     // A piece that still ends where the arc did keeps the arc's node; a piece that ends at

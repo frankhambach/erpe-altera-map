@@ -21,6 +21,15 @@ using Serilog;
 
 public sealed class TopologyService : ITopologyService
 {
+    // How far the faces may fall short of the coastline before a face has failed to close.
+    // It is not zero because the signed area of a shell that crosses itself understates the
+    // ground it covers, and four of them do.
+    //
+    // This fires as it stands, at 0.382%, and it is meant to: that is Maharath, Sanjan,
+    // Siam and a few more, whose whole territory is inside no face. The figure to watch
+    // after that is fixed is whatever the four self-crossing shells leave behind.
+    private const double MaximumAreaShortfall = 0.001;
+
     private readonly GeometryFactory geometryFactory;
 
     public TopologyService(GeometryFactory geometryFactory)
@@ -33,7 +42,7 @@ public sealed class TopologyService : ITopologyService
     // arcs would have to be recovered afterwards by comparing coordinates. Tracing keeps
     // every face referring to the very same Arc objects, which is what makes neighbouring
     // countries share a border exactly instead of merely agreeing to within rounding.
-    public void BuildFaces(ArcGraph arcGraph)
+    public void BuildFaces(ArcGraph arcGraph, double enclosedArea)
     {
         ArgumentNullException.ThrowIfNull(arcGraph);
 
@@ -58,18 +67,38 @@ public sealed class TopologyService : ITopologyService
         // area the coastline enclosed. The total runs over by the area of any lake that a
         // border crosses: splitting the lake's ring means the land around it routes through
         // the lake instead of carrying it as a hole, so the lake's halves become faces of
-        // their own. A total running under instead would mean a face had failed to close.
+        // their own. A total running under instead means a face failed to close.
         double area = arcGraph.Faces.Sum(
             face => GetSignedArea(face.Shell) - face.Holes.Sum(hole => Math.Abs(GetSignedArea(hole))));
 
         Log.Information(
             "Noded {Crossings} crossings and traced {ShellCount} faces with {HoleCount} holes, covering "
-            + "{Area:0.0} square units. {Unenclosed} outlines bound no face and belong to the ocean.",
+            + "{Area:0.0} of the {Enclosed:0.0} square units the coastline encloses. {Unenclosed} outlines "
+            + "bound no face and belong to the ocean.",
             crossings,
             shells.Length,
             outlines.Length - unenclosed,
             area,
+            enclosedArea,
             unenclosed);
+
+        // The comment above has been there since this was written and nothing ever checked
+        // it, which is how 0.382% of the land went missing without a word: a region whose
+        // boundary is walked into the outline of the landmass around it never becomes a
+        // face, and its ground belongs to nobody afterwards.
+        // An expectation of zero or less means the caller has nothing to compare against,
+        // which is how the tests build faces from a handful of rings without a coastline.
+        double shortfall = enclosedArea - area;
+        if ((enclosedArea > 0.0) && (shortfall > (enclosedArea * MaximumAreaShortfall)))
+        {
+            Log.Error(
+                "The faces come to {Shortfall:0.0} square units less than the coastline encloses, "
+                + "{Share:0.000%} of it. That much land is inside no face at all, so no country can be given "
+                + "it: a boundary somewhere is being walked into the outline of the landmass instead of into a "
+                + "face of its own.",
+                shortfall,
+                shortfall / enclosedArea);
+        }
     }
 
     public LinearRing Close(CoordinateSequence coordinateSequence)

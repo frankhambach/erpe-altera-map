@@ -11,7 +11,8 @@ using NetTopologySuite.Geometries;
 
 public interface ITopologyService
 {
-    void BuildFaces(ArcGraph arcGraph);
+    // enclosedArea is what the faces have to come to, from ICoastlineService.AddArcs.
+    void BuildFaces(ArcGraph arcGraph, double enclosedArea);
 
     LinearRing Close(CoordinateSequence coordinateSequence);
 

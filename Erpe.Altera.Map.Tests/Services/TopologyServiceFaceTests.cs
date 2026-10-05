@@ -28,7 +28,7 @@ public class TopologyServiceFaceTests
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
 
         Face face = arcGraph.Faces.Should().ContainSingle().Subject;
         face.Holes.Should().BeEmpty();
@@ -49,7 +49,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0, -10), (10, -10)]);
         Arc border = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
 
         arcGraph.Faces.Should().HaveCount(2);
         arcGraph.Faces.Should()
@@ -68,7 +68,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(10, 10), (20, 10), (20, 20), (10, 20), (10, 10)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
 
         arcGraph.Faces.Should().HaveCount(2, "the island and the lake inside it");
         Face island = arcGraph.Faces.MaxBy(face => face.Shell.Length == 1 ? 1 : 0)!;
@@ -87,7 +87,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(-10, 0), (10, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(0, -10), (0, 10)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
 
         arcGraph.Arcs.Should().HaveCount(4, "both arcs are split at the crossing");
         arcGraph.Arcs.Select(arc => arc.StartNode)
@@ -112,7 +112,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0, -10), (10, -10)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
 
         int inFaces = arcGraph.Faces.Sum(face => face.Shell.Length + face.Holes.Sum(hole => hole.Length));
         int outlines = (arcGraph.Arcs.Count * 2) - inFaces;
@@ -123,10 +123,30 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldStillTraceTheFace_WhenItComesToLessThanTheCoastlineEncloses(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The shortfall is reported rather than thrown, so a run that loses ground still
+        // produces its output and says so. Here the one face covers 900 of the 2000 units
+        // claimed, which is the shape of the real defect: land inside no face at all.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Coast,
+            [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 2000.0);
+
+        arcGraph.Faces.Should().ContainSingle();
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
-        Action action = () => CreateService(coordinateSequenceFactory).BuildFaces(null!);
+        Action action = () => CreateService(coordinateSequenceFactory).BuildFaces(null!, 0.0);
 
         action.Should().Throw<ArgumentNullException>();
     }

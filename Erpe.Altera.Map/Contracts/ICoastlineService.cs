@@ -1,4 +1,4 @@
-// Copyright (c) Frank Hambach. All rights reserved.
+﻿// Copyright (c) Frank Hambach. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 namespace Erpe.Altera.Map.Contracts;
@@ -11,5 +11,6 @@ using NetTopologySuite.Geometries;
 
 public interface ICoastlineService
 {
-    void AddArcs(IEnumerable<Polygon> polygons, ArcGraph arcGraph);
+    // Returns the area the faces traced from this graph have to come to.
+    double AddArcs(IEnumerable<Polygon> polygons, ArcGraph arcGraph);
 }

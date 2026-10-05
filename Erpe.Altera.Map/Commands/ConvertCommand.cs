@@ -505,7 +505,7 @@ internal sealed class ConvertCommand : Command
                     .Select((polygon, index) => new Shape($"{grouping.Name}-{index}", polygon))))
             .ToArray();
 
-        this.coastlineService.AddArcs(
+        double enclosedArea = this.coastlineService.AddArcs(
             countries.SelectMany(country => country.Shapes).Select(shape => shape.Polygon),
             arcGraph);
 
@@ -523,7 +523,7 @@ internal sealed class ConvertCommand : Command
                 .ConfigureAwait(false);
         }
 
-        this.topologyService.BuildFaces(arcGraph);
+        this.topologyService.BuildFaces(arcGraph, enclosedArea);
 
         // One pass per layer, because a substate shape lies inside its country's shape and
         // passing both at once would report every substate face as belonging to two
