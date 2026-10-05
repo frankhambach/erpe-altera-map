@@ -20,6 +20,21 @@ using Serilog;
 
 public sealed class CorrectionService : ICorrectionService
 {
+    // Below this, two arcs running together are not a duplicate but two borders leaving the
+    // same junction side by side, which keep company for a segment or two before parting.
+    //
+    // Measured over the sample map at a tolerance of 0.25 units: 1551 runs come to 1.75
+    // units or less, ten more to between 2.0 and 2.8, and then nothing at all until the
+    // shortest genuine repeat at 8.6. The short runs are one and two drawn segments - the
+    // tracers sit on a lattice whose steps are 1.75 and 2.0 units - so the apparent gap just
+    // under 2 units is an artifact of that lattice and the real empty span is the one this
+    // figure sits in.
+    //
+    // Cutting the short runs out is not merely pointless but harmful: their ends are around
+    // 1.4 units from the arc they supposedly repeat, too far for welding to put back, so at
+    // 2.0 this left seven ends loose that nothing could resolve.
+    private const double MinimumDuplicateRun = 4.0;
+
     // How far to look when reporting what an unresolved end nearly reached. Diagnostic
     // only: nothing is ever welded at this distance.
     private const double ReportingRadius = 50.0;
@@ -29,6 +44,84 @@ public sealed class CorrectionService : ICorrectionService
     public CorrectionService(GeometryFactory geometryFactory)
     {
         this.geometryFactory = geometryFactory;
+    }
+
+    // Cuts out stretches of tracer that only repeat another tracer. A border drawn twice is
+    // not two boundaries: the two copies leave a node at the same angle, so a face
+    // traversal has nothing to tell them apart by. It takes the twin and walks straight
+    // back along it, which encloses nothing on that side, so the two faces that should lie
+    // either side of the border come out as one - bounded by a ring that crosses itself
+    // wherever the copies cross, which is then rejected as geometry and dropped, taking
+    // both countries with it.
+    //
+    // What is cut out is the repeat, not the border: the copy that was kept still carries
+    // it. The pieces either side of the cut are left as loose ends on purpose, so that
+    // welding attaches them to the surviving copy. Cutting without that would strand the
+    // borders that ended on the duplicate and fuse a different pair of countries instead.
+    public void Collapse(ArcGraph arcGraph, double duplicateTolerance)
+    {
+        ArgumentNullException.ThrowIfNull(arcGraph);
+
+        Dictionary<Arc, double> lengths = arcGraph.Arcs.ToDictionary(arc => arc, GetLength);
+        Duplicate[] duplicates = [.. FindDuplicates(arcGraph, BuildSegmentIndex(arcGraph), duplicateTolerance)];
+
+        // Longest first, so that where several copies lie on top of each other it is the
+        // longest that survives. An arc kept as an original is never itself removed, and a
+        // stretch is passed over when the arc has already given up an overlapping one.
+        Dictionary<Arc, List<Duplicate>> removals = [];
+        HashSet<Arc> originals = [];
+        int contested = 0;
+        foreach (Duplicate duplicate in duplicates
+                     .Where(duplicate => (duplicate.Length >= MinimumDuplicateRun) && IsRedundant(duplicate, lengths))
+                     .OrderByDescending(duplicate => duplicate.Length))
+        {
+            if (originals.Contains(duplicate.Arc)
+                || removals.ContainsKey(duplicate.Twin)
+                || Overlaps(removals, duplicate))
+            {
+                ++contested;
+                continue;
+            }
+
+            if (!removals.TryGetValue(duplicate.Arc, out List<Duplicate>? taken))
+            {
+                taken = [];
+                removals.Add(duplicate.Arc, taken);
+            }
+
+            taken.Add(duplicate);
+            originals.Add(duplicate.Twin);
+        }
+
+        Duplicate[] collapsed = [.. removals.Values.SelectMany(list => list)];
+        ApplyRemovals(arcGraph, removals);
+
+        Duplicate[] tooShort = [.. duplicates.Where(duplicate => duplicate.Length < MinimumDuplicateRun)];
+        Log.Information(
+            "Collapsed {Collapsed} duplicated tracer stretches covering {Length:0.0} units onto the copy that was "
+            + "kept. {Contested} further stretches were left alone because what they repeat is a duplicate itself, "
+            + "and {Short} runs stayed under the {Minimum} unit minimum, the longest of them {Longest:0.00} units.",
+            collapsed.Length,
+            collapsed.Sum(duplicate => duplicate.Length),
+            contested,
+            tooShort.Length,
+            MinimumDuplicateRun,
+            tooShort.Length == 0 ? 0.0 : tooShort.Max(duplicate => duplicate.Length));
+
+        // Reported one by one, because the repeat is a defect in the source map rather than
+        // something this pipeline should have to carry: the border is drawn twice and only
+        // one of the copies can be the boundary.
+        foreach (Duplicate duplicate in collapsed.OrderByDescending(duplicate => duplicate.Length))
+        {
+            Log.Warning(
+                "Arc {ArcId} repeats arc {TwinId} for {Length:0.0} units from {X:0.##}, {Y:0.##}. The border is "
+                + "drawn twice in the source map; the repeat was cut out.",
+                duplicate.Arc.Id,
+                duplicate.Twin.Id,
+                duplicate.Length,
+                duplicate.Start.X,
+                duplicate.Start.Y);
+        }
     }
 
     public IEnumerable<Gap> FindGaps(IList<Country> countries)
@@ -375,6 +468,188 @@ public sealed class CorrectionService : ICorrectionService
             arcGraph.CoordinateSequenceFactory.Create(coordinates[(start + 1)..Math.Max(start + 1, end + 1)]));
     }
 
+    // Walks each arc segment by segment, asking which other arc is nearest, and groups
+    // consecutive segments that answer the same arc into one run.
+    //
+    // The midpoint stands for its segment. Segments on this map run about 1.75 units, seven
+    // times the tolerance, so requiring both ends as well would break a run wherever one
+    // end of one segment happened to stray outside.
+    private static List<Duplicate> FindDuplicates(
+        ArcGraph arcGraph,
+        STRtree<Segment> index,
+        double duplicateTolerance)
+    {
+        List<Duplicate> duplicates = new List<Duplicate>();
+        foreach (Arc arc in arcGraph.Arcs)
+        {
+            Coordinate[] coordinates = arc.GetFullCoordinates();
+            Arc? twin = null;
+            int first = 0;
+            double length = 0.0;
+            for (int i = 0; i < (coordinates.Length - 1); ++i)
+            {
+                Arc? nearest = FindNearestArc(index, arc, coordinates[i], coordinates[i + 1], duplicateTolerance);
+                if (nearest != twin)
+                {
+                    if (twin != null)
+                    {
+                        duplicates.Add(new Duplicate(arc, twin, first, i - 1, length, coordinates[first]));
+                    }
+
+                    twin = nearest;
+                    first = i;
+                    length = 0.0;
+                }
+
+                length += coordinates[i].Distance(coordinates[i + 1]);
+            }
+
+            if (twin != null)
+            {
+                duplicates.Add(new Duplicate(arc, twin, first, coordinates.Length - 2, length, coordinates[first]));
+            }
+        }
+
+        return duplicates;
+    }
+
+    private static Arc? FindNearestArc(
+        STRtree<Segment> index,
+        Arc arc,
+        Coordinate start,
+        Coordinate end,
+        double duplicateTolerance)
+    {
+        Coordinate middle = new Coordinate((start.X + end.X) / 2.0, (start.Y + end.Y) / 2.0);
+        Envelope envelope = new Envelope(middle);
+        envelope.ExpandBy(duplicateTolerance);
+
+        Arc? nearest = null;
+        double bestDistance = duplicateTolerance;
+        foreach (Segment segment in index.Query(envelope))
+        {
+            if (segment.Arc == arc)
+            {
+                continue;
+            }
+
+            (double distance, double _) = GetDistance(
+                middle,
+                segment.Coordinates[segment.Index],
+                segment.Coordinates[segment.Index + 1]);
+
+            // The lower identifier wins a tie, so that the same map always collapses the
+            // same way however the index happens to hand the segments back.
+            if ((distance < bestDistance)
+                || ((distance <= bestDistance) && ((nearest == null) || (segment.Arc.Id < nearest.Id))))
+            {
+                bestDistance = distance;
+                nearest = segment.Arc;
+            }
+        }
+
+        return nearest;
+    }
+
+    // The shorter arc is the one to give up, and an equal pair is settled by identifier so
+    // that four copies of one border leave the same survivor every time.
+    private static bool IsRedundant(Duplicate duplicate, Dictionary<Arc, double> lengths)
+    {
+        double length = lengths[duplicate.Arc];
+        double twinLength = lengths[duplicate.Twin];
+
+        return (length < twinLength)
+            || ((length <= twinLength) && (duplicate.Arc.Id > duplicate.Twin.Id));
+    }
+
+    private static bool Overlaps(Dictionary<Arc, List<Duplicate>> removals, Duplicate duplicate)
+    {
+        return removals.TryGetValue(duplicate.Arc, out List<Duplicate>? taken)
+            && taken.Exists(other => (duplicate.First <= other.Last) && (other.First <= duplicate.Last));
+    }
+
+    // Rebuilds each arc as the stretches the removals leave behind. The ends of those
+    // stretches become nodes of their own, loose until welding attaches them to the copy
+    // that was kept.
+    private static void ApplyRemovals(ArcGraph arcGraph, Dictionary<Arc, List<Duplicate>> removals)
+    {
+        Arc[] originals = arcGraph.Arcs.ToArray();
+        arcGraph.Arcs.Clear();
+        foreach (Arc arc in originals)
+        {
+            if (!removals.TryGetValue(arc, out List<Duplicate>? intervals))
+            {
+                arcGraph.Arcs.Add(arc);
+                continue;
+            }
+
+            Coordinate[] coordinates = arc.GetFullCoordinates();
+            List<(int First, int Last)> kept = new List<(int First, int Last)>();
+            int cursor = 0;
+            foreach (Duplicate interval in intervals.OrderBy(duplicate => duplicate.First))
+            {
+                if (interval.First > cursor)
+                {
+                    kept.Add((cursor, interval.First));
+                }
+
+                cursor = interval.Last + 1;
+            }
+
+            if (cursor < (coordinates.Length - 1))
+            {
+                kept.Add((cursor, coordinates.Length - 1));
+            }
+
+            foreach ((int first, int last) in kept)
+            {
+                AddStretch(
+                    arcGraph,
+                    arc,
+                    coordinates,
+                    first,
+                    last,
+                    first == 0 ? arc.StartNode : arcGraph.AddNode(coordinates[first].Copy()),
+                    last == (coordinates.Length - 1) ? arc.EndNode : arcGraph.AddNode(coordinates[last].Copy()));
+            }
+        }
+    }
+
+    // First and last are vertex indexes, and the two nodes stand for those vertices, so
+    // only what lies strictly between them is carried as the arc's own geometry.
+    private static void AddStretch(
+        ArcGraph arcGraph,
+        Arc arc,
+        Coordinate[] coordinates,
+        int first,
+        int last,
+        Node firstNode,
+        Node lastNode)
+    {
+        if (last <= first)
+        {
+            return;
+        }
+
+        arcGraph.AddArc(
+            arc.Kind,
+            firstNode,
+            lastNode,
+            arcGraph.CoordinateSequenceFactory.Create(coordinates[(first + 1)..last]));
+    }
+
+    private static double GetLength(Arc arc)
+    {
+        Coordinate[] coordinates = arc.GetFullCoordinates();
+        double length = 0.0;
+        for (int i = 1; i < coordinates.Length; ++i)
+        {
+            length += coordinates[i].Distance(coordinates[i - 1]);
+        }
+
+        return length;
+    }
+
     private static int Find(int[] parents, int index)
     {
         while (parents[index] != index)
@@ -477,6 +752,16 @@ public sealed class CorrectionService : ICorrectionService
         lineMerger.Add(lineStrings);
         return lineMerger.GetMergedLineStrings().OfType<LineString>();
     }
+
+    // A stretch of one arc that repeats another. First and Last are segment indexes, so the
+    // stretch runs from vertex First to vertex Last + 1.
+    private readonly record struct Duplicate(
+        Arc Arc,
+        Arc Twin,
+        int First,
+        int Last,
+        double Length,
+        Coordinate Start);
 
     // Carries the arc's coordinates so that the search does not rebuild them per segment.
     private readonly record struct Segment(Arc Arc, Coordinate[] Coordinates, int Index);

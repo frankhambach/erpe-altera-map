@@ -38,6 +38,14 @@ internal sealed class ConvertCommand : Command
     // outputs are where size is managed.
     private const int OutputDecimals = 6;
 
+    // How close two tracers have to run, in SVG units, before one of them is taken for a
+    // copy of the other. Chosen by measurement: of the 131,850 units of tracer on the
+    // sample map, 1490.8 lie within 0.01 units of another tracer and those are the
+    // duplicates. The answer is the same anywhere between 0.10 and 0.50, and two genuinely
+    // distinct borders 0.25 units apart would be a corridor a seventh as wide as the gap
+    // between consecutive drawn points.
+    private const double DuplicateTolerance = 0.25;
+
     private const double SnapTolerance = 0.02;
 
     // How far a loose arc end may reach to find what it was drawn to meet, in SVG units.
@@ -312,6 +320,13 @@ internal sealed class ConvertCommand : Command
             arcGraph.Arcs.Count(arc => arc.Kind == ArcKind.Border),
             arcGraph.Arcs.Count(arc => arc.Kind == ArcKind.Substate),
             arcGraph.Nodes.Count);
+
+        // Before the coast is added and before welding: the duplicates are a defect of the
+        // drawn tracer layers, which is also the only place they can arise, since the coast
+        // comes out of a union and cannot repeat itself. Doing it first means the loose ends
+        // left by the cut are resolved by the welding that follows rather than by a second
+        // mechanism of its own.
+        this.correctionService.Collapse(arcGraph, DuplicateTolerance);
 
         SvgElement[] shapesElements = document.Descendants()
             .Where(element => element.ID is "Country_Shapes" or "Substate_Shapes")

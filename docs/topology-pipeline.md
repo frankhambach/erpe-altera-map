@@ -170,6 +170,86 @@ node identifiers stay stable once welding starts removing merged nodes.
 node total is one short of twice the arc count, which confirms the single closed
 subpath is the only one. 26 subpaths are dropped by the 0.1-unit filter.
 
+## Phase 1b — collapse duplicated tracers
+
+`CorrectionService.Collapse`, run directly after the tracers are read. This is the step
+Phase 1 called for above — "where a substate border coincides with a national border the
+two coincident arcs must collapse to one" — generalised, because the coincidences that
+actually matter here are between one border and another: 21 of the 22 pairs on the sample
+map are `Border` against `Border` and only one is `Substate` against `Border`.
+
+**Some borders are drawn twice in the source map.** One stretch is drawn as a single path
+and again as two or three, or a path is simply copy-pasted — four byte-identical copies of
+one 125-unit border in one place, four of a 22.8-unit border in another.
+
+**A border drawn twice is not two boundaries, and it is not harmless.** The two copies
+leave a node at the same angle, so the face traversal has nothing to tell them apart by:
+it takes the twin and walks straight back along it. That encloses nothing on that side, so
+the two faces that should lie either side of the border come out as **one face covering
+both countries** — and because the copies are near-identical rather than identical, they
+cross, so the ring is rejected as geometry and dropped, taking both countries with it.
+
+Caught in the act on the Salia/Anzigo border, where two consecutive segments of the face
+boundary are each other's reverse, 0.0007 units apart:
+
+```
+segment 2144: 3592.5091,2299.7354 -> 3592.3499,2299.6363
+segment 2146: 3592.3506,2299.6367 -> 3592.5098,2299.7359
+```
+
+**What is cut out is the repeat, not the border.** The pieces either side of the cut are
+left as loose ends deliberately, so that the welding in Phase 3 attaches them to the
+surviving copy. Cutting without that strands the borders that ended on the duplicate: on
+this map one border arrives from the north at a node that lies 0.13 units *beside* the
+surviving copy without being part of it, and deleting the duplicate outright would leave
+it dangling and fuse a different pair of countries instead.
+
+Two measured thresholds:
+
+- **`DuplicateTolerance` = 0.25 units** (in `ConvertCommand`). Of the 131,850 units of
+  tracer, 1490.8 lie within 0.01 units of another tracer and those are the duplicates. The
+  answer is the same anywhere between 0.10 and 0.50 — 1488 units at 0.10, 1513 at 0.50 —
+  and two genuinely distinct borders 0.25 units apart would be a corridor a seventh as wide
+  as the gap between consecutive drawn points.
+- **`MinimumDuplicateRun` = 4.0 units.** 1551 runs come to 1.75 units or less, ten more to
+  between 2.0 and 2.8, then nothing until the shortest genuine repeat at 8.6. The short
+  ones are two borders leaving a junction together for a segment or two; the lattice the
+  tracers sit on has steps of 1.75 and 2.0 units, so the apparent gap just below 2 is an
+  artifact of the lattice and the real empty span is 2.8 to 8.6. **This was first set to
+  2.0 and that was wrong**: the ends of a 2-unit run sit about 1.4 units from the arc it
+  supposedly repeats, too far for welding to put back, and seven ends were left loose that
+  nothing could resolve.
+
+The shorter arc gives way, an equal pair is settled by identifier so that four copies
+always leave the same survivor, and an arc kept as an original is never itself removed.
+
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 14 stretches covering 903.3
+units cut out. An independent census of the welded graph afterwards finds **no overlap run
+of 4 units or more anywhere**, against 34 runs and 1491 units before. Loose ends stay at 8,
+the same eight as before the step existed. Faces 7129 → 7090, noded crossings 303 → 250,
+faces dropped for a self-crossing ring 5 → 4 and their area 61,230 → 27,878 square units.
+
+**Eleven countries come back from nothing**, and the land comes out of the neighbours that
+had absorbed them, in matching amounts:
+
+| Country | Before | After | Taken back from |
+| --- | --- | --- | --- |
+| Anzigo | 3.3 | 820,100.2 | its own dropped face |
+| Salia | 0.2 | 335,479.9 | Anzigo's fused face |
+| Smogland | 2,034.1 | 105,594.9 | Selkland −103,560.3 |
+| Sogdia | 0.2 | 103,186.9 | Itysia −104,920.2 |
+| Manden | 0.0 | 75,237.4 | Mali −128,266.4, Nigeria −89,840.0 |
+| Cape Leone | 0.3 | 53,028.9 | (same three-way redistribution) |
+| Tughun | 2,590.8 | 41,897.3 | Salur −39,306.4 |
+| Corubal | 0.0 | 38,426.4 | Cape Verde −38,426.2 |
+| Cyrevia | 0.0 | 35,687.9 | Babria −35,687.5 |
+| Evora | 0.0 | 10,269.8 | Ami −10,272.0 |
+| Fiume | 1,013.3 | 8,211.0 | Dalmatia −7,198.6 |
+
+No country loses ground without a recovery somewhere to match it, which is what makes this
+a transfer back rather than a new defect. Those are the only 20 countries whose area moves
+by more than 1%.
+
 ## Phase 2 — build the coastline
 
 New `ICoastlineService` / `CoastlineService`. The country shapes are used for
@@ -441,12 +521,13 @@ already passed through, where the face is pinched to a point or a hole touches i
 That is one ring in the graph but it crosses itself as geometry, and
 NetTopologySuite rejects it. Cutting the ring at every such point into the lobes it is
 really made of took the losses from **131 faces covering 1,363,675 square units — 23% of
-the land — down to 5 faces and 61,230**. This is the same unlooping the drawn shapes get
+the land — down to 4 faces and 27,878**. This is the same unlooping the drawn shapes get
 in 2a, for the same reason.
 
-(Both figures used to be quoted one count higher — 8 rather than 5 — because what was
-counted was invalid lobes rather than faces, and three of these faces produce two invalid
-lobes each. The area never changed.)
+(The count was quoted as 8 for a while, because what was counted was invalid lobes rather
+than faces and three of these faces produce two invalid lobes each; the area never changed.
+It then came down from 5 faces and 61,230 units to 4 and 27,878 when Phase 1b recovered
+Anzigo.)
 
 **6b.** Unprojection is memoized per coordinate, as set up in Phase 0b, so both sides of a
 border receive literally the same output values.
@@ -462,17 +543,21 @@ pass is assigned and assembled before the substate pass runs — a face carries 
 everything between them. Left on for substates it pulled 1019 faces, whole foreign
 countries among them, into whichever substate happened to border them.
 
-**Verified** against `Altera_Data_Generating_Map(13).svg`: 6129 shapes assembled for 1196
-countries from the national pass, 706 for the substate pass, and all five GeoJSON outputs
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 6087 shapes assembled for 1199
+countries from the national pass, 706 for 1544 substates, and all five GeoJSON outputs
 written.
 
 Still to do:
 
-- **5 faces covering 61,230 square units, about 1% of the land, still trace to a ring that
-  crosses itself** and are left out. Unlooping does not reach these, so they are not simple
-  self-touches; the likely cause is arcs that overlap collinearly rather than crossing at a
-  point, which is the same defect the lake clip fixed in 2c-bis but for the sea coast. They
-  are written out on their own by `--debug-svg`, below.
+- **4 faces covering 27,878 square units still trace to a ring that crosses itself** and are
+  left out, owned by Avanarsuaq, Kalimantan, Thelemark and Epsumba. Unlooping does not reach
+  these, so they are not simple self-touches. **The cause is not duplicated tracers**: the
+  census of Phase 1b was run again inside the window of each of these four faces and found
+  no overlap run of even 2 units, so the guess recorded here before — collinear overlap
+  along the sea coast — is wrong and the cause is still unknown. The one of the five that
+  *was* a duplicate, Anzigo's, is recovered. Epsumba's face is fifteen points at a single
+  coordinate and Thelemark's unloops into eleven lobes, which suggests more than one defect
+  among the four. They are written out on their own by `--debug-svg`, below.
 - **6d, arc-based simplification.** `VisvalingamSimplificationService` still simplifies each
   polygon independently, which gives the two sides of a border different geometry and
   undoes the guarantee. The `-low` and `-medium` outputs are affected.
@@ -509,9 +594,9 @@ angle, which is only there to tell neighbours apart.
 The nodes are the point of the two arc files. Welding is what the arc graph rests on, and a
 node is where it decided two drawn ends were meant to be the same point.
 
-Verified against `Altera_Data_Generating_Map(13).svg`: 6728 coast and lake arcs on 6728
-nodes, 3118 border and substate arcs on 2765, all 7129 faces with 6656 of them owned, and
-the 5 dropped faces. All four parse as XML, which is also the check that they are well
+Verified against `Altera_Data_Generating_Map(13).svg`: 6735 coast and lake arcs on 6735
+nodes, 3111 border and substate arcs on 2764, all 7090 faces with 6617 of them owned, and
+the 4 dropped faces. All four parse as XML, which is also the check that they are well
 formed.
 
 ## Phase 7 — verification
