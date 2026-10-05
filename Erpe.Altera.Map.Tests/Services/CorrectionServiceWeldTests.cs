@@ -29,7 +29,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(10.4, 0), (20, 0)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.Should().HaveCount(2);
         arcGraph.Arcs[0].EndNode.Should().BeSameAs(arcGraph.Arcs[1].StartNode);
@@ -48,7 +48,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0.8, 0), (-10, 10)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(1.6, 0), (-10, 20)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs[0].EndNode.Should().BeSameAs(arcGraph.Arcs[1].StartNode);
         arcGraph.Arcs[1].StartNode.Should().BeSameAs(arcGraph.Arcs[2].StartNode);
@@ -65,7 +65,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (20, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(5, 0.4), (5, 20)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.Should().HaveCount(3, "the crossed arc is split in two");
         Arc stem = arcGraph.Arcs.Single(arc => Array.Exists(arc.GetFullCoordinates(), c => c.Y >= 20.0));
@@ -85,7 +85,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (20, 0), (20, 20), (0, 20), (0, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(10, 0.3), (10, -20)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.Should().HaveCount(3);
         arcGraph.Arcs.Should().NotContain(arc => arc.IsClosed, "the ring is now open at the junction");
@@ -101,7 +101,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(10, 0.2), (10, 20)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(20, 0.2), (20, 20)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.Should().HaveCount(5, "the base is cut into three pieces by two stems");
     }
@@ -115,7 +115,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(14, 0), (20, 0)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.Should().HaveCount(2);
         arcGraph.Arcs[0].EndNode.Should().NotBeSameAs(arcGraph.Arcs[1].StartNode);
@@ -132,11 +132,33 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (20, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0.3), (10, 0.3), (20, 0.3)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.SelectMany(arc => arc.Coordinates.ToCoordinateArray())
             .Should()
             .OnlyContain(coordinate => (Math.Abs(coordinate.Y) < 1E-9) || (Math.Abs(coordinate.Y - 0.3) < 1E-9));
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Weld_ShouldStillSplit_WhenTheEndIsBeyondTheMergeToleranceButNotTheSplitOne(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The point of the two tolerances being different: an end two units out is a T
+        // junction for splitting to take, and splitting may reach it even where merging no
+        // longer would, because splitting moves no vertex that is already there.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (20, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, 2), (10, 20)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 0.5, 3.0);
+
+        arcGraph.Arcs.Should().HaveCount(3, "the base is split where the stem reaches it");
+        Arc stem = arcGraph.Arcs.Single(arc => Array.Exists(arc.GetFullCoordinates(), c => c.Y >= 20.0));
+        Node junction = stem.StartNode;
+        arcGraph.Arcs.Count(arc => (arc.StartNode == junction) || (arc.EndNode == junction))
+            .Should()
+            .Be(3, "both halves of the split arc and the stem meet there");
     }
 
     [AutoCustomizedData]
@@ -151,7 +173,7 @@ public class CorrectionServiceWeldTests
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (20, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, [(5, 0.4), (5, 20)]);
 
-        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.SelectMany(
                 arc => arc.GetFullCoordinates()
@@ -165,7 +187,7 @@ public class CorrectionServiceWeldTests
     public void Weld_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
-        Action action = () => CreateService(coordinateSequenceFactory).Weld(null!, 1.0);
+        Action action = () => CreateService(coordinateSequenceFactory).Weld(null!, 1.0, 1.0);
 
         action.Should().Throw<ArgumentNullException>();
     }

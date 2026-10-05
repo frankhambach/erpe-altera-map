@@ -87,7 +87,7 @@ public class CorrectionServiceCollapseTests
 
         CorrectionService service = CreateService(coordinateSequenceFactory);
         service.Collapse(arcGraph, 0.25);
-        service.Weld(arcGraph, 1.0);
+        service.Weld(arcGraph, 1.0, 1.0);
 
         arcGraph.Arcs.Should().HaveCount(3, "the long arc is split where the stem now meets it");
         Arc stem = arcGraph.Arcs.Single(arc => Array.Exists(arc.GetFullCoordinates(), c => c.Y >= 20.0));

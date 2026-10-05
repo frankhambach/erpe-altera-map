@@ -17,5 +17,5 @@ public interface ICorrectionService
 
     void Snap(IEnumerable<Coordinate> coordinates, double snapTolerance);
 
-    void Weld(ArcGraph arcGraph, double weldTolerance);
+    void Weld(ArcGraph arcGraph, double mergeTolerance, double splitTolerance);
 }

@@ -43,9 +43,14 @@ guessed.
 
 Two tolerances follow, and only two:
 
-- **`WeldTolerance = 1.0` units** (≈ 6.5 km) — how far a loose end may reach to find
-  something to attach to. It stays below the 1.75-unit linework resolution, so it
-  cannot merge genuinely distinct features.
+- **`MergeTolerance = 0.5` units and `SplitTolerance = 3.0`** (≈ 3.3 km and 19.6 km) — how
+  far a loose end may reach to find something to attach to, kept apart because the two
+  welds carry different risk. Phase 3 has the measurements; the paragraph below is the
+  history of the single figure they replaced.
+
+  Merging stays below the 1.75-unit linework resolution, so it cannot merge genuinely
+  distinct features. Splitting may exceed it, because it moves no existing vertex: it
+  threads the loose end into the arc it met and leaves everything else where it was.
 
   **Revised upwards from 0.5 on measurement.** The 99.59% figure in the table above
   was measured against `Country_Shapes` rings, but the graph's coast is the *union*
@@ -70,6 +75,13 @@ Two tolerances follow, and only two:
   is the chaining failure the tight tolerance exists to prevent, and it is visible in
   the split count falling. The three candidates beyond 1.0 sit at 1.43, 2.79 and
   12.48 and are better reported than guessed at.
+
+  **That last conclusion was wrong, and splitting the tolerance in two is what showed
+  it.** The chaining failure above is a property of *merging*, so it argued only for a
+  tight merge tolerance; the whole table conflates the two welds, because at the time
+  they shared one figure. Two of those three candidates, at 1.43 and 2.79, are ordinary
+  T-junctions that splitting resolves safely, and each of them was costing a country.
+  Only the one at 12.48 is better reported than guessed at. See Phase 3.
 A second tolerance, `MouthBridgeTolerance`, was planned for welding river mouths shut.
 It is not needed: see 3c, where the measurement that would have set it showed there is
 nothing to weld.
@@ -85,7 +97,7 @@ new PrecisionModel(10000.0)   // 0.0001 SVG units ≈ 0.65 m
 ```
 
 This grid is 4400× finer than the shortest legitimate connector and 5000× finer than
-`WeldTolerance`, so nothing real is quantised away and snap-rounding robustness is
+`MergeTolerance`, so nothing real is quantised away and snap-rounding robustness is
 unaffected by the choice.
 
 A coarser 0.001 units (≈ 6.5 m) was tried first and rejected on measurement: it moved
@@ -136,7 +148,7 @@ a total-length test, and make the semantics **collapse, not delete**:
 - total flattened length `< 0.1` units → discard (kills the two degenerate
   `<line>`s at 0.010 and 0.028 units; keeps the 0.431-unit one and the 0.44-unit
   connector).
-- total length `< WeldTolerance` → keep, and let Phase 3a's union-find merge both
+- total length `< MergeTolerance` → keep, and let Phase 3a's union-find merge both
   endpoints into one node. The arc becomes a zero-length self-loop that the noder
   drops, **but anything it was connecting stays connected through that node.**
   Deleting such an arc outright can disconnect the graph; collapsing cannot.
@@ -329,18 +341,78 @@ One-off, and not worth optimising until something downstream needs the time.
 Extend `ICorrectionService`, replacing `Snap` and `FindGaps`. All distances in SVG
 units; all lookups through an `STRtree` over arc segments.
 
-**3a. Endpoint ↔ endpoint, with union-find.** Group endpoints within
-`WeldTolerance` into one node using a disjoint-set structure, then set the node's
-coordinate to the group's centroid. Union-find rather than pairwise snapping
-because the current `Snap` sorts by X, `break`s after the first partner found, and
-therefore resolves neither chains nor transitivity: A→B and B→C can leave A and C
-apart. Handles 314 junctions, and absorbs the short-connector case from 0e.
+**The two welds have separate tolerances, `MergeTolerance` = 0.5 and `SplitTolerance` =
+3.0**, because they are not equally safe. Merging moves both ends, to the middle of the
+group, and chains transitively through union-find, so one generous tolerance can gather up
+a whole group of ends that were never meant to meet. Splitting threads the end into the arc
+it met as a node and moves no existing vertex, so a wrong split costs a kink in one arc and
+nothing else. Merging also runs first and consumes what it resolves, so the lower the merge
+tolerance, the more of the work falls to the safer of the two.
+
+Measured by running the whole map at each combination and counting the countries that come
+out with any geometry at all:
+
+| merge | split | merges | splits | ends left loose | faces | countries | dropped area |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1.0 | 1.0 | 425 | 2617 | 8 | 7090 | 1199 | 27,878 |
+| 1.0 | 3.0 | 425 | 2624 | 1 | 7097 | 1201 | 27,878 |
+| 0.75 | 3.0 | 400 | 2649 | 1 | 7106 | 1205 | 18,816 |
+| **0.5** | **3.0** | **386** | **2663** | **1** | **7110** | **1209** | **18,816** |
+| 0.5 | 5.0 | 386 | 2663 | 1 | 7110 | 1209 | 18,816 |
+| 0.5 | 1.0 | 386 | 2656 | 8 | 7103 | 1207 | 18,816 |
+| 0.25 | 3.0 | 355 | 2692 | 3 | 7111 | 1206 | 18,816 |
+
+**One loose end costs a country.** That is why eight warnings mattered far more than eight
+sounds: an unresolved end is a hole in the border network, and a hole means the two
+countries either side of it fuse into one face which only one of them can own. Resolving
+seven of the eight recovers six countries on its own.
+
+**Splitting at 3.0 is insensitive.** Of the eight ends loose at 1.0, seven have their
+nearest arc between 1.0 and 2.79 units away and the eighth at 12.48, so any tolerance
+between 2.8 and 12.4 resolves the same seven — 3.0 and 5.0 give identical output down to
+the face count. The remaining end is a drawing error to be fixed in the map, not reached
+for.
+
+**Merging at 0.5 is a peak, not a plateau**, and is the weaker of the two figures. The 39
+merges given up between 1.0 and 0.5 were wrong ones: ends that should have attached partway
+along an arc, merged with another endpoint instead — the failure this plan predicted at 1.5,
+which was already happening at 1.0. Below 0.5 it turns: at 0.25 three pairs that genuinely
+meet can no longer find each other and the enclosed land area rises by 2430 units, which is
+a boundary closing where it should not.
+
+Seventeen countries come back from nothing at 0.5/3.0, among them Shona (416,678), Chapada
+Diamantina (335,453), Ladakh (282,486), Madiyan, Parasia, Menominee, Pajistan, Tebul,
+Lawan, Kashin, Duran, Colchia and Zetna — and the land comes out of the neighbours that had
+absorbed them, Kalahari −423,991, Toncantins −335,464, Wutsang −282,596. These are cases
+this plan had put down to missing tracers; most of them were a border end falling one to
+three units short of the arc it was drawn to meet.
+
+**The cost of the gap between the two figures** is that two ends facing each other across
+a distance between 0.5 and 3.0 units are no longer merged but resolved by splitting one
+onto the other, which leaves a short reversed stub where they meet. It was expected to be
+the expensive part of lowering the merge tolerance and it is not: arcs shorter than a unit
+go from 171 to 182, five of the eleven being bare two-point ones, while arcs shorter than
+half a unit actually fall from 116 to 105. Set against 9062 units of face area recovered,
+that is a good trade, but it is the thing to look at first if a future export's numbers
+move the wrong way.
+
+**One country is lost to it:** Winnebagee, 4,122 square kilometres, whose face goes to
+Wisconsin, the substate that encloses it. That is the enclave-ownership weakness — a single
+interior point decides who owns a face — rather than anything about the weld, and it is the
+same weakness that hides the fused countries from 5b.
+
+**3a. Endpoint ↔ endpoint, with union-find.** Group endpoints within `MergeTolerance` into
+one node using a disjoint-set structure, then set the node's coordinate to the group's
+centroid. Union-find rather than pairwise snapping because the old `Snap` sorts by X,
+`break`s after the first partner found, and therefore resolves neither chains nor
+transitivity: A→B and B→C can leave A and C apart. 386 of them, and it absorbs the
+short-connector case from 0e.
 
 **3b. Endpoint ↔ segment interior — the dominant case.** For each endpoint still
-unattached, find the nearest arc segment within `WeldTolerance`. Split that segment
-at the foot of the perpendicular, insert a node there, and merge the endpoint into
-it. ~1500 junctions in this file. **Do not treat this as the exception path** — it
-is how most of this map's borders meet.
+unattached, find the nearest arc segment within `SplitTolerance`. Split that segment at the
+foot of the perpendicular, insert a node there, and merge the endpoint into it. 2663 of them
+in this file. **Do not treat this as the exception path** — it is how most of this map's
+borders meet, by seven to one.
 
 **3c. River-mouth weld — dropped. Not needed for this input.**
 
@@ -381,23 +453,23 @@ Worth re-running the same measurement against a new export before assuming this 
 holds. If necks do appear, the corrected formulation above is the one to build, with
 a tolerance capping how wide a neck may be closed.
 
-**3d. Report, do not guess.** Any endpoint unresolved at `WeldTolerance` goes to a
+**3d. Report, do not guess.** Any endpoint unresolved at `SplitTolerance` goes to a
 warning list with its SVG coordinates and, so the report says how far short it fell
 and what it probably should have met, the kind and distance of the nearest arc beyond
-the tolerance. Expect 7 entries. This list is the manual-review queue for each new
-export, and it must stay short — if it grows, something changed upstream.
+the tolerance. Expect 1 entry, the end whose nearest arc is 12.48 units away. This list is
+the manual-review queue for each new export, and it must stay short — if it grows,
+something changed upstream. Each entry is worth a country, so none of them is cheap.
 
 **3e. Apply the tolerance to endpoints only, never to interior vertices.** The
 linework interiors are not defective; only the ends are. This keeps every coast and
 border vertex bit-identical to the drawing, and it is why welding is done as a local
-operation rather than by snap-rounding the whole coast: a global grid at
-`WeldTolerance` would staircase the 19% of drawn segments shorter than 1 unit.
+operation rather than by snap-rounding the whole coast: a global grid at either
+tolerance would staircase the 19% of drawn segments shorter than 1 unit.
 
-**Verified** against `Altera_Data_Generating_Map(13).svg`: of 2872 loose ends, 257
-merged onto each other, 2608 split an arc to attach partway along it — 1025 of those
-on the coast — and 7 remain loose and reported. T-junctions outnumber endpoint-to-
-endpoint joins by better than ten to one, so splitting is the main path, not the
-exception.
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 386 ends merged onto each other
+within 0.5 units, 2663 split an arc to attach partway along it within 3.0 — 700 of those on
+the coast — and 1 remains loose and reported. T-junctions outnumber endpoint-to-endpoint
+joins by seven to one, so splitting is the main path, not the exception.
 
 ## Phase 4 — node and trace faces
 

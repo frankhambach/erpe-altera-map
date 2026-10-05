@@ -48,13 +48,35 @@ internal sealed class ConvertCommand : Command
 
     private const double SnapTolerance = 0.02;
 
-    // How far a loose arc end may reach to find what it was drawn to meet, in SVG units.
-    // Chosen by measurement: 0.5 leaves 147 ends loose, 0.75 leaves 44 and 1.0 leaves 7.
-    // Going further does not pay - at 1.5 the two ends it recovers cost 30 further endpoint
-    // merges and 25 fewer splits, meaning ends that should attach partway along an arc are
-    // being merged with another endpoint instead. It stays below the drawing's own
-    // resolution of about 1.75 units between consecutive points.
-    private const double WeldTolerance = 1.0;
+    // How far two loose arc ends may be apart and still be taken for the same point, in SVG
+    // units. Merging is the riskier of the two welds: it moves both ends, to the middle of
+    // the group, and it chains transitively through union-find, so one generous tolerance
+    // can gather up a whole group of ends that were never meant to meet. Merging also runs
+    // first and consumes the ends it resolves, so the lower this is, the more of the work
+    // falls to splitting, which is both commoner and safer.
+    //
+    // Measured by running the map at 1.0, 0.75, 0.5 and 0.25 with splitting at 3.0, and
+    // counting the countries that come out with any geometry at all: 1201, 1205, 1209,
+    // 1206. The 39 merges given up between 1.0 and 0.5 were wrong ones - ends that should
+    // have attached partway along an arc, merged with another endpoint instead, which is
+    // the failure the old comment here predicted at 1.5 and which was already happening at
+    // 1.0. Below 0.5 it turns: at 0.25 three pairs that genuinely meet can no longer find
+    // each other, and the enclosed land area rises by 2430 units, which is a boundary
+    // closing where it should not. So this one is a peak rather than a plateau.
+    private const double MergeTolerance = 0.5;
+
+    // How far a loose arc end may reach to find the arc it was drawn to meet partway along,
+    // in SVG units. The dominant case by better than ten to one, and the safer operation:
+    // the end is threaded into that arc as a node and no existing vertex moves, so a wrong
+    // split costs a kink in one arc and nothing else.
+    //
+    // It can therefore afford to reach much further than MergeTolerance, and the data says
+    // exactly how far. Of the eight ends left loose at 1.0, seven have their nearest arc
+    // between 1.0 and 2.79 units away and the eighth at 12.48, so anything between 2.8 and
+    // 12.4 resolves the same seven and leaves the same one. Confirmed by running it: 3.0
+    // and 5.0 produce identical output down to the face count. The remaining one is a
+    // drawing error to be fixed in the map rather than reached for.
+    private const double SplitTolerance = 3.0;
 
     private static readonly JsonSerializerOptions JsonSerializerOptions = new JsonSerializerOptions
         {
@@ -370,7 +392,7 @@ internal sealed class ConvertCommand : Command
             countries.SelectMany(country => country.Shapes).Select(shape => shape.Polygon),
             arcGraph);
 
-        this.correctionService.Weld(arcGraph, WeldTolerance);
+        this.correctionService.Weld(arcGraph, MergeTolerance, SplitTolerance);
 
         if (debugSvg)
         {

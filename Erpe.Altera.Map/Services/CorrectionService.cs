@@ -142,15 +142,23 @@ public sealed class CorrectionService : ICorrectionService
                     [..FindCoasts(combinedIntersection.Shell, countries.SelectMany(country => country.Shapes))]));
     }
 
-    // Attaches every loose arc end to whatever it was drawn to meet. The tolerance applies
+    // Attaches every loose arc end to whatever it was drawn to meet. Both tolerances apply
     // to arc endpoints only and never to interior vertices: the linework interiors are not
-    // defective, only the ends are, and the drawing's own resolution is coarser than the
+    // defective, only the ends are, and the drawing's own resolution is coarser than either
     // tolerance, so snapping interiors would staircase genuine coastline.
-    public void Weld(ArcGraph arcGraph, double weldTolerance)
+    //
+    // The two are separate because the operations are not equally safe. Merging two ends
+    // moves both of them, to the middle of the group, so a wrong merge displaces linework
+    // and - being transitive, by union-find - can chain a whole group of ends together that
+    // were never meant to meet. Splitting leaves every existing vertex where it is and only
+    // threads a node into the arc that was met, so a wrong split costs a kink in that arc
+    // and nothing else. Merging runs first and consumes the ends it resolves, so the lower
+    // the merge tolerance the more of the work falls to the safer of the two.
+    public void Weld(ArcGraph arcGraph, double mergeTolerance, double splitTolerance)
     {
         ArgumentNullException.ThrowIfNull(arcGraph);
 
-        int mergedCount = MergeLooseEnds(arcGraph, weldTolerance);
+        int mergedCount = MergeLooseEnds(arcGraph, mergeTolerance);
 
         // Built after merging, because merging moves nodes and so moves the arc ends with
         // them. Querying an index built before that would search stale positions.
@@ -161,7 +169,7 @@ public sealed class CorrectionService : ICorrectionService
         int coastCount = 0;
         foreach (Node node in GetLooseEnds(arcGraph))
         {
-            Split? split = FindSplit(index, node, weldTolerance);
+            Split? split = FindSplit(index, node, splitTolerance);
             if (split == null)
             {
                 unresolved.Add(node);
@@ -178,10 +186,13 @@ public sealed class CorrectionService : ICorrectionService
         ApplySplits(arcGraph, splits);
 
         Log.Information(
-            "Welded {MergedCount} ends onto each other and split {SplitCount} arcs to take the rest, "
-            + "{CoastCount} of those on the coast. {UnresolvedCount} ends remain loose.",
+            "Welded {MergedCount} ends onto each other within {MergeTolerance} units and split {SplitCount} arcs "
+            + "within {SplitTolerance} to take the rest, {CoastCount} of those on the coast. "
+            + "{UnresolvedCount} ends remain loose.",
             mergedCount,
+            mergeTolerance,
             splits.Count,
+            splitTolerance,
             coastCount,
             unresolved.Count);
 
@@ -198,7 +209,7 @@ public sealed class CorrectionService : ICorrectionService
                 node.Id,
                 node.Coordinate.X,
                 node.Coordinate.Y,
-                weldTolerance,
+                splitTolerance,
                 nearest?.Arc.Kind.ToString() ?? "nothing",
                 nearest?.Distance ?? double.PositiveInfinity);
         }
