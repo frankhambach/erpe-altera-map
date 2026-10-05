@@ -60,6 +60,7 @@ internal static class Program
             services.AddTransient<ICorrectionService, CorrectionService>();
             services.AddTransient<IFaceAssignmentService, FaceAssignmentService>();
             services.AddTransient<IAssemblyService, AssemblyService>();
+            services.AddTransient<IVerificationService, VerificationService>();
             services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();
             services.AddTransient<Command, ConvertCommand>();
 

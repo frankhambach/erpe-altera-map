@@ -110,6 +110,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly ITracerService tracerService;
 
+    private readonly IVerificationService verificationService;
+
     public ConvertCommand(
         ISvgApproximationService svgApproximationService,
         IProjectionService projectionService,
@@ -121,6 +123,7 @@ internal sealed class ConvertCommand : Command
         IFaceAssignmentService faceAssignmentService,
         ISimplificationService simplificationService,
         IDiagnosticsService diagnosticsService,
+        IVerificationService verificationService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
     {
@@ -134,6 +137,7 @@ internal sealed class ConvertCommand : Command
         this.faceAssignmentService = faceAssignmentService;
         this.simplificationService = simplificationService;
         this.diagnosticsService = diagnosticsService;
+        this.verificationService = verificationService;
         this.geometryFactory = geometryFactory;
 
         Option<FileInfo> inOption = new("--in", "The SVG file to read country shapes from.");
@@ -441,6 +445,17 @@ internal sealed class ConvertCommand : Command
         }
 
         this.Unproject(countries, sourceEnvelope);
+
+        // After unprojecting and before writing, so that what is checked is as close to
+        // what is written as it can be. Rounding to the output decimals happens as the file
+        // is written and can only bring two coordinates together, never separate them, so
+        // sharing here is sharing in the file.
+        //
+        // One pass per layer written, because each is a partition in its own right. The two
+        // together are not: a border between two countries is also the edge of a substate,
+        // so segments would legitimately come up three times.
+        this.verificationService.VerifySharing(national, arcGraph, true);
+        this.verificationService.VerifySharing(substates, arcGraph, false);
 
         await this.WriteGeoJsonAsync(
                 countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState),

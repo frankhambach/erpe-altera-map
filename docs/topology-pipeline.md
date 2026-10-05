@@ -692,9 +692,7 @@ Still to do:
 - **6d, arc-based simplification.** `VisvalingamSimplificationService` still simplifies each
   polygon independently, which gives the two sides of a border different geometry and
   undoes the guarantee. The `-low` and `-medium` outputs are affected.
-- **6e, TopoJSON.**
-- **The exact-sharing check in Phase 7 has not been run.** Until it has, assembling by
-  union rather than by walking the arcs is an assumption, not a verified property.
+- **6e, TopoJSON.** The sharing it needs is now verified: see Phase 7 item 4.
 
 ## Intermediate output for inspection — `--debug-svg`
 
@@ -741,9 +739,112 @@ new export trustworthy.
    half of `FindOverlaps`.
 3. **No gaps:** the union of all faces equals `land` plus the absorbed slivers,
    with no interior holes except the lakes kept in 2c.
-4. **Exact sharing:** for each pair of adjacent countries, the shared boundary
-   extracted from each is coordinate-identical. This is the acceptance test for the
-   whole project.
+4. **Exact sharing: run, and it passes.** For each pair of adjacent countries the shared
+   boundary extracted from each is coordinate-identical. This is the acceptance test for
+   the whole project, so it is worth being careful about what does and does not count as
+   evidence.
+
+   The test is a planar-partition count over the finished GeoJson, keyed on the
+   coordinates as written to six decimals - which is what a consumer actually reads.
+   Every segment inland should appear exactly twice, once from each side and in opposite
+   directions, and the segments appearing once should be the outer boundary of the whole:
+   sea coast and lake shore.
+
+   Measured on `out-no-substates.json`, 1,341,790 segments over 1227 countries:
+
+   | | |
+   | --- | --- |
+   | used by two different countries, opposite directions | 260,541 |
+   | used by two different countries, same direction | 102 |
+   | used twice by the same country | 5 |
+   | used once | 820,494 |
+   | used three times or more | **0** |
+
+   **The decisive line is the once-only count**, because it needs a source outside the
+   output to be worth anything: the arc graph has 821,741 segments of `Coast` and `Lake`
+   arc, and those are the only boundary a single face has. The output shows 820,494
+   segments used once, **0.152% short** - a residue consistent with the four faces dropped
+   in 6a, which carry 15,313 boundary segments between them.
+
+   **Two of the three checks turned out to be no evidence at all**, which a control showed
+   and reasoning alone did not. Thinning every ring independently - keeping every other
+   vertex, which is the failure per-polygon simplification causes - destroys 74% of the
+   sharing, and yet:
+
+   | | real output | sharing deliberately broken |
+   | --- | --- | --- |
+   | segments shared by two countries | 260,541 | 67,164 |
+   | used three times or more | 0 | **0** |
+   | once-only vertices of odd degree | 0 | **0** |
+   | once-only count against the coast | **−0.152%** | **−34.057%** |
+
+   The triple-use and odd-degree tests stay clean through a 74% failure, because each
+   country ring is a closed loop whichever coordinates it is made of. Only the comparison
+   against the independently counted coast separates the two cases, by a factor of 224 in
+   the residual.
+
+   Three findings came out of it, none of them a sharing failure:
+
+   - **102 segments are shared in the same direction, all of them by one pair, Chukcha and
+     Nauka.** Probing either side of each - 204 points - puts 102 in Chukcha only and 102
+     in Nauka only and **none in both**, so the two do not overlap: the coordinates are
+     identical and the interiors are on opposite sides. The cause is winding. Across the
+     national output 6103 shells are counter-clockwise and **2 are clockwise**, and RFC
+     7946 asks for counter-clockwise shells, so this is a conformance nit worth fixing for
+     consumers that care, and nothing to do with sharing.
+   - **The substate layer has 2 segments used three times**, by Capital Territory twice and
+     Falkland once, with 2 vertices of odd degree beside them. A self-touching ring, and
+     the one real defect the check found.
+   - **5 segments are used twice by a single country** and 2 shells and 1 hole have zero
+     area - degenerate spikes, two of them under a micro-degree long.
+
+   So assembling a country by unioning its faces does follow the edges those faces already
+   share rather than recomputing them, which was an assumption this plan rested on from
+   Phase 6a onwards and is now a measurement. `out-no-substates.json` and
+   `out-only-substates.json` are exactly shared; `out.json` is too, within each layer, but
+   carries 3766 segments used three or more times because it holds both layers at once and
+   a national border is also a substate edge. `out-low.json` and `out-medium.json` are not
+   shared and cannot be until 6d.
+
+   **It now runs in the pipeline**, as `IVerificationService`, once for each layer that
+   gets written, between unprojecting and writing: rounding to the output decimals happens
+   as the file is written and can only bring two coordinates together, never separate them,
+   so sharing there is sharing in the file. The two layers are checked separately because
+   each is a partition in its own right and the two together are not - a border between two
+   countries is also the edge of a substate, which is why `out.json` carries 3766 segments
+   used three times and is not a defect.
+
+   What it reports on this map:
+
+   | | national | substates |
+   | --- | --- | --- |
+   | segments | 1,341,790 | 349,208 |
+   | shared by two countries, both sides identical | 260,643 | 80,605 |
+   | used once | 820,494 | 187,990 |
+   | shared but wound the same way | 0 | 0 |
+   | used twice by one country | 5 | 1 |
+   | used three or more times | 0 | **2** |
+   | coast and lake segments in the graph | 821,825 | not comparable |
+   | shortfall against the coast | **0.162%** | |
+
+   `MaximumShortfall` is 2%, which is the middle of the valley between the 0.162% a sound
+   run shows and the 34.057% the broken control shows; anything from half a percent to
+   thirty separates those two cases identically.
+
+   **The in-run check and the check over the file disagree about one thing, and both are
+   right.** Over the file, 102 segments - all of them between Chukcha and Nauka - come up
+   shared in the *same* direction. In memory they are properly opposite. The difference is
+   winding: rings are wound however the face they came from was traced, 821 of them against
+   the convention, and the writer puts nearly all of that right on the way out. Two shells
+   escape it and reach the file clockwise, and in the file those two look as though they
+   meet their neighbour the wrong way round. So the in-run check orients every ring before
+   comparing, because in-memory winding is arbitrary by design and counting it would be
+   821 false alarms a run.
+
+   **That leaves one thing the in-run check cannot see: the two shells the writer leaves
+   clockwise.** Their coordinates are shared either way, so it is not a sharing failure,
+   but RFC 7946 asks for counter-clockwise shells and a consumer may care. It is checkable
+   only on the output, and it is open.
 5. **Warning lists near-empty:** unresolved endpoints ≤ 12, polygonizer dangles 0,
    large faces inside two countries 0.
 
