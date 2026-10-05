@@ -13,6 +13,7 @@ using Erpe.Altera.Map.Models;
 
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Index.Strtree;
+using NetTopologySuite.Operation.OverlayNG;
 
 using Serilog;
 
@@ -22,6 +23,18 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
     // shapes overlap slightly all along every border they do share, which leaves slivers of
     // all but no area in both at once; only a face of real size means a tracer is missing.
     private const double FusedFaceArea = 25.0;
+
+    // How much of a face a country has to cover before it counts as claiming it. Shapes
+    // overlap their neighbours slightly all along every border they share, so without this
+    // every face would be claimed by everything around it.
+    //
+    // Measured over the 10,397 claims the 6586 land faces attract: 3776 cover less than a
+    // twentieth of their face, 4 cover between a twentieth and a tenth, and then nothing at
+    // all covers between a tenth and a fifth, after which 40 claims spread from 0.2 to 0.9
+    // and 6577 cover nine tenths or more. Any threshold inside that empty tenth classifies
+    // the sample identically - at 0.10 and at 0.20 the same 33 faces come out with two
+    // claimants - which is what makes this a reading of the data rather than a setting.
+    private const double MinimumClaimShare = 0.15;
 
     private readonly GeometryFactory geometryFactory;
 
@@ -44,6 +57,7 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         double waterArea = 0.0;
         int assigned = 0;
         int fused = 0;
+        int reported = 0;
         List<Face> unclaimed = [];
         for (int i = 0; i < arcGraph.Faces.Count; ++i)
         {
@@ -64,52 +78,66 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
                 continue;
             }
 
-            // Grouped by country, not by shape. A country is made of many shapes and they
-            // routinely overlap each other, so counting shapes would report almost every
-            // face as belonging to two countries at once.
-            Point point = polygon.InteriorPoint;
-            IGrouping<Country, (Polygon Polygon, Country Country)>[] containing =
-                shapes.Query(point.EnvelopeInternal)
-                    .Where(shape => shape.Polygon.Contains(point))
+            // How much of the face each country covers, rather than which shapes contain
+            // one point of it. A point can only report a face as shared where the two
+            // shapes overlap each other, and on a fused pair that is a sliver along some
+            // other border they really do share rather than the face itself - so the point
+            // test misses the fusion in almost every case where it matters, and hands the
+            // whole face to whichever country the point happened to fall in.
+            //
+            // Grouped by country, not by shape: a country is made of many shapes, and they
+            // routinely overlap each other.
+            double area = Math.Abs(polygon.Area);
+            Claim[] claims =
+            [
+                .. shapes.Query(polygon.EnvelopeInternal)
                     .GroupBy(shape => shape.Country)
-                    .ToArray();
+                    .Select(
+                        grouping => new Claim(
+                            grouping.Key,
+                            this.GetClaimedArea(grouping.Select(shape => shape.Polygon), polygon, area)))
+                    .Where(claim => (claim.Area > 0.0) && (claim.Area >= area * MinimumClaimShare))
+                    .OrderByDescending(claim => claim.Area),
+            ];
 
-            if (containing.Length == 0)
+            if (claims.Length == 0)
             {
                 unclaimed.Add(face);
                 continue;
             }
 
-            // More than one country containing the same face means their shapes overlap
-            // there. The larger share wins, but a large face in that position is the sign
-            // of a missing tracer, which no rule here can repair.
-            face.Owner = containing.Length == 1
-                ? containing[0].Key
-                : containing.MaxBy(
-                    grouping => grouping.Sum(shape => GetOverlap(shape.Polygon, polygon)))!.Key;
+            // The largest share wins. Where two countries each cover a real part of one
+            // face there is no better answer available: the border between them was never
+            // drawn, so nothing here knows where it would have run.
+            face.Owner = claims[0].Country;
             ++assigned;
 
-            // Two countries covering the same face means the border between them was never
-            // drawn and they have fused. No rule here can repair that; the tracer has to be
-            // added to the source map, so each one is reported individually.
-            if (containing.Length > 1)
+            // Two countries covering the same face means the border between them is missing
+            // and they have fused. The tracer has to be added to the source map, so each
+            // one large enough to matter is reported individually.
+            if (claims.Length > 1)
             {
                 ++fused;
-                if (polygon.Area < FusedFaceArea)
+                if (area < FusedFaceArea)
                 {
                     continue;
                 }
 
+                ++reported;
+                Point point = polygon.InteriorPoint;
                 Log.Error(
-                    "Face {FaceId} of {Area:0.0} square units at {X:0.##}, {Y:0.##} lies inside {Count} countries "
-                    + "at once, including {First} and {Second}. The tracer between them is missing.",
+                    "Face {FaceId} of {Area:0.0} square units at {X:0.##}, {Y:0.##} is covered by {Count} "
+                    + "countries at once, {First} by {FirstShare:0.00} of it and {Second} by {SecondShare:0.00}. "
+                    + "The tracer between them is missing.",
                     face.Id,
-                    polygon.Area,
+                    area,
                     point.X,
                     point.Y,
-                    containing.Length,
-                    containing[0].Key.Id,
-                    containing[1].Key.Id);
+                    claims.Length,
+                    claims[0].Country.Id,
+                    claims[0].Area / area,
+                    claims[1].Country.Id,
+                    claims[1].Area / area);
             }
         }
 
@@ -121,14 +149,15 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         Log.Information(
             "Assigned {Assigned} faces to countries, left {Water} as water covering {WaterArea:0.0} square "
             + "units and absorbed {Absorbed} of "
-            + "{Unclaimed} unclaimed faces into their neighbours. {Fused} faces lie in two countries at once, "
-            + "all but the reported ones too small to matter.",
+            + "{Unclaimed} unclaimed faces into their neighbours. {Fused} faces are covered by more than one "
+            + "country at once, {Reported} of them large enough to matter and reported above.",
             assigned,
             water,
             waterArea,
             absorbed,
             unclaimed.Count,
-            fused);
+            fused,
+            reported);
     }
 
     // A face the lake shore alone bounds is water. Anything with a border or a sea coast in
@@ -161,17 +190,17 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         return index;
     }
 
-    private static double GetOverlap(Geometry shape, Geometry face)
+    private static Geometry GetOverlapGeometry(Geometry shape, Polygon face)
     {
         try
         {
-            return shape.Intersection(face).Area;
+            return shape.Intersection(face);
         }
         catch (TopologyException)
         {
             // A shape that self-intersects cannot be overlaid. Falling back on the envelope
             // keeps the larger share winning without the whole run failing for one bad ring.
-            return shape.EnvelopeInternal.Intersection(face.EnvelopeInternal).Area;
+            return face.Factory.ToGeometry(shape.EnvelopeInternal.Intersection(face.EnvelopeInternal));
         }
     }
 
@@ -251,6 +280,28 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
         return length;
     }
 
+    // A country can have several shapes over one face and they routinely overlap each
+    // other, so their parts are unioned rather than added up. The result is capped at the
+    // face, because the fallback in GetOverlapGeometry measures an envelope when a shape is
+    // too broken to overlay and an envelope can be larger than the face itself; 42 of the
+    // claims on this map are measured that way.
+    private double GetClaimedArea(IEnumerable<Polygon> candidates, Polygon face, double faceArea)
+    {
+        Geometry[] parts =
+        [
+            .. candidates.Select(shape => GetOverlapGeometry(shape, face)).Where(part => !part.IsEmpty),
+        ];
+
+        double claimed = parts.Length switch
+            {
+                0 => 0.0,
+                1 => parts[0].Area,
+                _ => UnaryUnionNG.Union(parts, this.geometryFactory, this.geometryFactory.PrecisionModel).Area,
+            };
+
+        return Math.Min(claimed, faceArea);
+    }
+
     private Polygon CreatePolygon(ImmutableArray<DirectedArc> ring)
     {
         List<Coordinate> coordinates = ring.GetCoordinates();
@@ -263,4 +314,7 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
 
         return this.geometryFactory.CreatePolygon(coordinates.ToArray());
     }
+
+    // What one country covers of one face.
+    private readonly record struct Claim(Country Country, double Area);
 }

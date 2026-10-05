@@ -552,18 +552,77 @@ face as fused: 723 faces. Only `UnitaryState` and `FederatedState` go into this 
 Substates subdivide the same faces again and need a pass of their own, which Phase 6
 needs anyway since it writes the two layers separately.
 
-**A fused face needs an area threshold.** Country shapes overlap slightly all along
-every border they *do* share, leaving slivers of almost no area inside both at once. 17
-faces lie in two countries; 15 of them have an area of 0.0. Only a face of real size
-means a tracer is genuinely missing, so the report is limited to those above 25 units².
+**5b-bis. A country claims a face by how much of it the country covers, not by whether
+its shapes contain one point of the face.** The point test was wrong in both directions
+and the second one was invisible:
+
+- It **reported almost no fusions**. A face shared by two countries only contains a point
+  of both where their two shapes overlap *each other*, and on a fused pair that overlap is
+  a sliver along some other border they really do share — not the face. So the test fired
+  on the slivers and missed the fusions.
+- It **gave the face away by accident.** Whichever country the single point happened to
+  fall in took the whole face, even where another country covered most of it.
+
+Each country's claim is now the area of the face its shapes cover, unioned across its own
+shapes rather than added up, since those routinely overlap each other. The largest claim
+owns the face; anything under `MinimumClaimShare` is not a claim at all.
+
+**`MinimumClaimShare` = 0.15**, from the distribution of all 10,397 claims the 6586 land
+faces attract:
+
+| share of the face a country covers | claims |
+| --- | --- |
+| under 0.05 | 3776 |
+| 0.05 to 0.10 | 4 |
+| **0.10 to 0.20** | **0** |
+| 0.20 to 0.90 | 40 |
+| 0.90 and over | 6577 |
+
+Sharply bimodal with an empty tenth in between: at 0.10 and at 0.20 the same 33 faces come
+out with two claimants, so any threshold inside it reads the data the same way.
+
+The claim is capped at the face's own area, because the fallback for a shape too broken to
+overlay measures an envelope instead of an intersection and an envelope can be larger than
+the face. 42 claims are measured that way; before the cap one of them read 1.94 of its
+face.
+
+**The real number of fused faces is 33, of which 14 are large enough to matter** — not the
+17 and 2 the point test saw. All 14 are reported individually with both countries and both
+shares. Nineteen of the 33 are partial fusions where the face genuinely straddles two
+countries; the other 14 are faces two countries each cover entirely, which is four pairs
+drawn with the *same* shape plus ten faces of all but no area where the share is 0/0 noise.
+
+**There is no enclave population to handle.** A rule giving a face to the smaller of two
+countries that both cover it — on the grounds that a container drawn solid covers its
+enclaves — was considered and dropped: of the 14 faces that would qualify, four are the
+duplicate-shape pairs and ten are degenerate. Nothing on this map is an enclave drawn
+inside a solid container.
+
+**What this cannot do is divide a fused face.** Without the tracer there is nothing to
+divide it along, so the whole face goes to the larger claimant — and where a country's
+entire territory *is* one fused face, that country comes out with nothing. The new rule
+changes which of the two it is: Kovenda and Vantong gain everything, Bopedi and Prabang
+lose everything, where before the point decided it. Deciding by area is at least
+deterministic and explicable, but the only real repair is the missing tracer, which is now
+named in the report. Cutting the face along the two shapes' own boundary would recover both
+countries and would keep exact sharing, since both pieces would come from one cut line; it
+is not done here because it puts geometry into the output that no traced face produced.
 
 **5c. Unclaimed land faces are absorbed** into the neighbour they share the most border
 with. This is the whole of gap filling in this representation.
 
-**Verified** against `Altera_Data_Generating_Map(13).svg`: 6541 faces assigned to
-countries, 415 left as water, 160 of 168 unclaimed faces absorbed, and exactly **two**
-genuine missing tracers reported — Martinique/Caribbea at 57.6 units² and
-Caribbea/Iouanorre at 27.3, both small Caribbean islands.
+**Verified** against `Altera_Data_Generating_Map(13).svg`: 6584 faces assigned to
+countries, 466 left as water, 46 of 60 unclaimed faces absorbed, and **14 genuine missing
+tracers reported** where the point test reported two. Nine countries come back from nothing
+— Damarana 381,874 square kilometres, Ute 288,088, Etuguay 172,043, Siksika Range 147,342,
+Vantong 142,328, Florida 126,033, Kovenda 97,733, Savoy 26,194, Ekara 16,137 — taken back
+from the neighbours whose shapes had been catching their faces by a point, Walpira
+−381,874, Uruguay −172,043 and others. Two are lost, Bopedi and Prabang, both to the
+fused-face rule above. National countries with no geometry at all: 20 before, 17 after.
+Total national land moves by −0.000%, so this is redistribution and not creation.
+
+The cost is time: claiming by area is 7110 faces against every shape whose envelope meets
+them, which takes the assignment from about 3 seconds to about 25.
 
 Absorption runs to a fixpoint, because a run of unclaimed faces can be several deep: the
 innermost only gains an owned neighbour once the one outside it has been absorbed. That

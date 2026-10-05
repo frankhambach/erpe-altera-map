@@ -105,6 +105,51 @@ public class FaceAssignmentServiceTests
 
     [AutoCustomizedData]
     [Test]
+    public void Assign_ShouldGiveTheFaceToWhoeverCoversMostOfIt_WhenTheInteriorPointFallsInAnother(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The defect the area test replaces. The interior point of this face lands in the
+        // middle country, which covers two fifths of it, while the country on either side
+        // of that covers three fifths. A point can only report where it happens to land.
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 100);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph);
+        Country most = new Country(
+            "Most",
+            CountryType.UnitaryState,
+            [
+                new Shape("Most-0", geometryFactory.CreatePolygon(CreateRing(0, 0, 30, 100))),
+                new Shape("Most-1", geometryFactory.CreatePolygon(CreateRing(70, 0, 30, 100))),
+            ]);
+        Country middle = CreateCountry(geometryFactory, "Middle", 30, 0, 40, 100);
+
+        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [most, middle], true);
+
+        arcGraph.Faces.Should().ContainSingle().Which.Owner.Should().BeSameAs(most);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Assign_ShouldLeaveTheFaceUnclaimed_WhenNothingCoversMoreThanASliverOfIt(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Shapes overlap their neighbours slightly along every border they share, so a face
+        // can be clipped by a shape with no business owning it. Covering a twelfth of a
+        // face is not a claim to it.
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 100);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph);
+        Country sliver = CreateCountry(geometryFactory, "Sliver", 0, 0, 8, 100);
+
+        new FaceAssignmentService(geometryFactory).Assign(arcGraph, [sliver], false);
+
+        arcGraph.Faces.Should().ContainSingle().Which.Owner.Should().BeNull();
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Assign_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
