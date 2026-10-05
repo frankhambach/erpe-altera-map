@@ -441,10 +441,14 @@ public sealed class CorrectionService : ICorrectionService
                 start = split.SegmentIndex + 1;
             }
 
-            AddPiece(arcGraph, arc, coordinates, start, coordinates.Length - 1, startNode, arc.EndNode);
+            AddPiece(arcGraph, arc, coordinates, start, coordinates.Length - 2, startNode, arc.EndNode);
         }
     }
 
+    // The nodes stand for the vertices either side of the piece: startNode for vertex
+    // start, endNode for vertex end + 1, and only the vertices between them are carried as
+    // the piece's own geometry. The last piece of a split arc therefore ends at vertex
+    // end + 1 as well, so its end is passed as the second to last vertex and not the last.
     private static void AddPiece(
         ArcGraph arcGraph,
         Arc arc,

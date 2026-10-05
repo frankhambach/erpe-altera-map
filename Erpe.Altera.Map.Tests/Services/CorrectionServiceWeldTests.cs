@@ -141,6 +141,27 @@ public class CorrectionServiceWeldTests
 
     [AutoCustomizedData]
     [Test]
+    public void Weld_ShouldNotRepeatAVertex_WhenAnArcIsSplit(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The piece after a split ends at its end node, which already stands for the arc's
+        // last vertex. Carrying that vertex as geometry as well leaves every split arc with
+        // a zero length segment on the end.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (20, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(5, 0.4), (5, 20)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0);
+
+        arcGraph.Arcs.SelectMany(
+                arc => arc.GetFullCoordinates()
+                    .Zip(arc.GetFullCoordinates().Skip(1), (first, second) => first.Equals2D(second)))
+            .Should()
+            .OnlyContain(repeated => !repeated);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Weld_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
