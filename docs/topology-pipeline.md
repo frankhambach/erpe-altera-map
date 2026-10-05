@@ -678,6 +678,44 @@ countries among them, into whichever substate happened to border them.
 countries from the national pass, 706 for 1544 substates, and all five GeoJSON outputs
 written.
 
+**6d. Simplification decides once per arc, not once per polygon.** Simplifying each polygon
+on its own gives the two countries either side of a border different geometry, which undoes
+the one thing the pipeline is built for. What the coarse outputs do instead:
+
+1. Each arc is simplified on its own, as an open line with **both ends pinned**, since those
+   ends are nodes where it meets the arcs around it.
+2. What that produces is not a new line but **the set of coordinates to drop**, collected
+   across every arc.
+3. Every ring in the output is then filtered through that one set.
+
+Dropping by coordinate rather than by position is what carries the decision to both sides: a
+ring is a run of arcs, each side of a border holds the same coordinates, so each side loses
+the same ones. `VisvalingamSimplificationService` is now an open-line simplifier only; the
+ring-based polygon method it used to expose is gone, since nothing can use it without
+breaking the guarantee.
+
+Three details that are not incidental:
+
+- **Node coordinates are subtracted from the set afterwards.** An arc never offers up its
+  own ends, but another arc may carry the same coordinate somewhere in its interior, and
+  dropping it there would take a junction with it.
+- **An arc that closes on itself keeps at least 6 points** (`ClosedArcMinimumPoints`). An
+  island is one closed arc, and simplifying one down to a triangle loses it; 6 is the floor
+  the old ring-based simplifier used, kept so the coarse outputs lose no more small islands
+  than before.
+- **A ring left with too little to close is omitted, not kept unsimplified.** Keeping it
+  would be the one thing that breaks sharing, since its neighbour would have dropped those
+  coordinates and it would not. It costs 8 rings of 6467 at 0.001 and 10 at 0.01.
+
+**Verified**: 951,315 of the 1,172,853 arc coordinates go at 0.001 and 1,086,487 at 0.01,
+leaving files of 5.63 MB and 2.36 MB against 5.59 and 2.35 before, so the tolerances still
+mean what they did. Against the per-polygon output, segments shared exactly rise **4.4% at
+0.001 and 25% at 0.01**, and segments with one side fall 2.3% and 11%. The improvement is
+not larger because per-polygon Visvalingam is deterministic, so neighbours often made the
+same decision anyway - what changes is that it is now guaranteed rather than coincidental.
+The in-run check reports 0 segments shared the wrong way round and 0 used three times in the
+simplified national layer.
+
 Still to do:
 
 - **4 faces covering 27,878 square units still trace to a ring that crosses itself** and are
@@ -689,9 +727,7 @@ Still to do:
   *was* a duplicate, Anzigo's, is recovered. Epsumba's face is fifteen points at a single
   coordinate and Thelemark's unloops into eleven lobes, which suggests more than one defect
   among the four. They are written out on their own by `--debug-svg`, below.
-- **6d, arc-based simplification.** `VisvalingamSimplificationService` still simplifies each
-  polygon independently, which gives the two sides of a border different geometry and
-  undoes the guarantee. The `-low` and `-medium` outputs are affected.
+- **6d is done: see below.**
 - **6e, TopoJSON.** The sharing it needs is now verified: see Phase 7 item 4.
 
 ## Intermediate output for inspection — `--debug-svg`
@@ -760,11 +796,24 @@ new export trustworthy.
    | used once | 820,494 |
    | used three times or more | **0** |
 
-   **The decisive line is the once-only count**, because it needs a source outside the
-   output to be worth anything: the arc graph has 821,741 segments of `Coast` and `Lake`
-   arc, and those are the only boundary a single face has. The output shows 820,494
-   segments used once, **0.152% short** - a residue consistent with the four faces dropped
-   in 6a, which carry 15,313 boundary segments between them.
+   **That once-only count needed a source outside the output, and comparing counts was the
+   wrong way to use it.** The arc graph has 821,741 segments of `Coast` and `Lake` arc, the
+   only boundary a single face has, against 820,494 segments used once in the output - 0.152%
+   short, which looked like a clean pass and was reported as one.
+
+   It was not. Asking the right question - is each once-only segment *actually* a coast
+   segment - shows **11,785 of them are not**: 0.878% of the boundary is border with one
+   side to it. The count check had netted two errors against each other, roughly 12,000
+   unpaired borders against roughly 14,000 coast segments missing from the output, and read
+   the difference as agreement. The check now tests membership instead, and the four dropped
+   faces turn out to account for only 1,141 of the 11,785, measured by adding their
+   boundaries to what is allowed one side.
+
+   **Where the other 11,785 come from is open.** It is not simplification - the count falls
+   to 6,155 and 4,889 in the coarse outputs, which take away paired boundary faster than
+   unpaired. The likeliest cause is the union in 6a modifying an edge here and there rather
+   than following it, which is the assumption this item set out to test; it holds for
+   260,643 segments and not for about 11,785.
 
    **Two of the three checks turned out to be no evidence at all**, which a control showed
    and reasoning alone did not. Thinning every ring independently - keeping every other
@@ -798,9 +847,9 @@ new export trustworthy.
    - **5 segments are used twice by a single country** and 2 shells and 1 hole have zero
      area - degenerate spikes, two of them under a micro-degree long.
 
-   So assembling a country by unioning its faces does follow the edges those faces already
-   share rather than recomputing them, which was an assumption this plan rested on from
-   Phase 6a onwards and is now a measurement. `out-no-substates.json` and
+   So assembling a country by unioning its faces follows the edges those faces already share
+   for 260,643 segments of boundary and not for about 11,785 of it - an assumption this plan
+   rested on from Phase 6a onwards, now a measurement with a residue attached. `out-no-substates.json` and
    `out-only-substates.json` are exactly shared; `out.json` is too, within each layer, but
    carries 3766 segments used three or more times because it holds both layers at once and
    a national border is also a substate edge. `out-low.json` and `out-medium.json` are not
@@ -825,11 +874,12 @@ new export trustworthy.
    | used twice by one country | 5 | 1 |
    | used three or more times | 0 | **2** |
    | coast and lake segments in the graph | 821,825 | not comparable |
-   | shortfall against the coast | **0.162%** | |
+   | one-sided and not coast, lake or a dropped face | **11,785** | |
 
-   `MaximumShortfall` is 2%, which is the middle of the valley between the 0.162% a sound
-   run shows and the 34.057% the broken control shows; anything from half a percent to
-   thirty separates those two cases identically.
+   `MaximumUnpairedShare` is 10%, set to catch a break rather than the residue above: twice
+   the worst figure a sound run produces, against the three quarters of all sharing that the
+   thinned control loses. It is deliberately loose, and it should be tightened the moment the
+   11,785 are understood.
 
    **The in-run check and the check over the file disagree about one thing, and both are
    right.** Over the file, 102 segments - all of them between Chukcha and Nauka - come up

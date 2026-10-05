@@ -46,6 +46,16 @@ internal sealed class ConvertCommand : Command
     // between consecutive drawn points.
     private const double DuplicateTolerance = 0.25;
 
+    // How many points to leave an arc that closes on itself, whatever the tolerance says.
+    // An island is one closed arc, and simplifying one down to a triangle loses it; this is
+    // the floor the ring-based simplifier used before, kept so that the coarse outputs lose
+    // no more of the small islands than they did.
+    private const int ClosedArcMinimumPoints = 6;
+
+    private const double LowTolerance = 0.01;
+
+    private const double MediumTolerance = 0.001;
+
     private const double SnapTolerance = 0.02;
 
     // How far two loose arc ends may be apart and still be taken for the same point, in SVG
@@ -244,10 +254,7 @@ internal sealed class ConvertCommand : Command
             + outFile.Extension);
     }
 
-    private async Task WriteGeoJsonAsync(
-        IEnumerable<Country> countries,
-        FileInfo outFile,
-        double? simplificationTolerance = null)
+    private static async Task WriteGeoJsonAsync(IEnumerable<Country> countries, FileInfo outFile)
     {
         FeatureCollection featureCollection = new FeatureCollection();
         featureCollection.Clear();
@@ -256,13 +263,7 @@ internal sealed class ConvertCommand : Command
             Feature feature = new Feature
                 {
                     Attributes = new AttributesTable(),
-                    Geometry = new MultiPolygon(
-                        country.Shapes.Select(shape => shape.Polygon)
-                            .Select(polygon =>
-                                simplificationTolerance == null
-                                    ? polygon
-                                    : this.simplificationService.Simplify(polygon, simplificationTolerance.Value))
-                            .ToArray()),
+                    Geometry = new MultiPolygon(country.Shapes.Select(shape => shape.Polygon).ToArray()),
                 };
             feature.Geometry.Apply(new RoundCoordinateSequenceFilter());
 
@@ -276,13 +277,125 @@ internal sealed class ConvertCommand : Command
             .ConfigureAwait(false);
     }
 
+    private static int CountRings(IEnumerable<Country> countries)
+    {
+        return countries.SelectMany(country => country.Shapes)
+            .Sum(shape => 1 + shape.Polygon.NumInteriorRings);
+    }
+
+    // Every stretch of boundary that is allowed to have only one side to it: the sea coast
+    // and the lake shores, and the boundary of each face 6a had to leave out, since the
+    // hole a dropped face leaves is bounded from the outside only.
+    private static Coordinate[][] GetOneSided(
+        Dictionary<Arc, Coordinate[]> arcs,
+        HashSet<(double X, double Y)>? removed,
+        IEnumerable<Face> dropped)
+    {
+        HashSet<Arc> oneSided =
+        [
+            .. arcs.Keys.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake),
+            .. dropped.SelectMany(face => face.Holes.Prepend(face.Shell))
+                .SelectMany(ring => ring)
+                .Select(directed => directed.Arc),
+        ];
+
+        return
+        [
+            .. oneSided.Where(arcs.ContainsKey)
+                .Select(arc => removed == null
+                    ? arcs[arc]
+                    : arcs[arc].Where(coordinate => !removed.Contains((coordinate.X, coordinate.Y))).ToArray()),
+        ];
+    }
+
+    // The coordinates simplification takes out, decided arc by arc and collected into one
+    // set. Dropping by coordinate rather than by position is what carries the decision to
+    // both sides of a border: each side holds the same coordinates, so each side loses the
+    // same ones.
+    private HashSet<(double X, double Y)> SelectRemoved(Dictionary<Arc, Coordinate[]> arcs, double tolerance)
+    {
+        HashSet<(double X, double Y)> removed = [];
+        foreach ((Arc arc, Coordinate[] line) in arcs)
+        {
+            foreach (Coordinate coordinate in this.simplificationService.SelectRemoved(
+                         line,
+                         tolerance,
+                         arc.IsClosed ? ClosedArcMinimumPoints : 2))
+            {
+                removed.Add((coordinate.X, coordinate.Y));
+            }
+        }
+
+        // A node is where arcs meet, and the arc it belongs to never offers one up. Another
+        // arc may still carry the same coordinate somewhere in its interior though, and
+        // dropping it there would take the junction with it.
+        foreach (Coordinate[] line in arcs.Values)
+        {
+            removed.Remove((line[0].X, line[0].Y));
+            removed.Remove((line[^1].X, line[^1].Y));
+        }
+
+        return removed;
+    }
+
+    private Country[] Filter(IEnumerable<Country> countries, HashSet<(double X, double Y)> removed)
+    {
+        return
+        [
+            .. countries.Select(
+                country => new Country(
+                    country.Id,
+                    country.Type,
+                    country.Shapes.Select(shape => new Shape(shape.Id, this.Filter(shape.Polygon, removed)))
+                        .Where(shape => !shape.Polygon.IsEmpty))),
+        ];
+    }
+
+    private Polygon Filter(Polygon polygon, HashSet<(double X, double Y)> removed)
+    {
+        LinearRing? shell = this.Filter(polygon.Shell, removed);
+
+        return shell == null
+            ? this.geometryFactory.CreatePolygon()
+            : this.geometryFactory.CreatePolygon(
+                shell,
+                [.. polygon.Holes.Select(hole => this.Filter(hole, removed)).OfType<LinearRing>()]);
+    }
+
+    // A ring that comes out of this with too little left to close is left out rather than
+    // kept unsimplified: keeping it would be the one thing that breaks sharing, since its
+    // neighbour would have dropped those coordinates and it would not.
+    private LinearRing? Filter(LinearRing ring, HashSet<(double X, double Y)> removed)
+    {
+        Coordinate[] coordinates = ring.CoordinateSequence.ToCoordinateArray();
+        List<Coordinate> kept = new List<Coordinate>();
+        for (int i = 0; i < (coordinates.Length - 1); ++i)
+        {
+            if (!removed.Contains((coordinates[i].X, coordinates[i].Y)))
+            {
+                kept.Add(coordinates[i]);
+            }
+        }
+
+        if (kept.Count < 3)
+        {
+            return null;
+        }
+
+        kept.Add(kept[0]);
+
+        return this.geometryFactory.CreateLinearRing(kept.ToArray());
+    }
+
     // Unprojects every shape in place, turning SVG coordinates into longitude and
     // latitude. Memoizing on the SVG coordinate is what makes borders match: two
     // shapes that share a vertex in SVG space are guaranteed the same output value,
     // because Unproject is only ever evaluated once per distinct input.
-    private void Unproject(IEnumerable<Country> countries, Envelope sourceEnvelope)
+    private void Unproject(
+        IEnumerable<Country> countries,
+        Envelope sourceEnvelope,
+        Dictionary<Coordinate, Coordinate> unprojected)
     {
-        Dictionary<Coordinate, Coordinate> unprojected = new Dictionary<Coordinate, Coordinate>();
         foreach (Shape shape in countries.SelectMany(country => country.Shapes))
         {
             shape.Polygon = this.geometryFactory.CreatePolygon(
@@ -422,7 +535,8 @@ internal sealed class ConvertCommand : Command
         Country[] substates = countries.Where(country => country.Type is CountryType.FederalState).ToArray();
 
         this.faceAssignmentService.Assign(arcGraph, national, true);
-        IReadOnlyList<Face> dropped = this.assemblyService.Assemble(arcGraph, national);
+        IReadOnlyList<Face> droppedNational = this.assemblyService.Assemble(arcGraph, national);
+        IReadOnlyList<Face> dropped = droppedNational;
 
         if (debugSvg)
         {
@@ -444,41 +558,68 @@ internal sealed class ConvertCommand : Command
                 .ConfigureAwait(false);
         }
 
-        this.Unproject(countries, sourceEnvelope);
+        Dictionary<Coordinate, Coordinate> unprojected = new Dictionary<Coordinate, Coordinate>();
+        this.Unproject(countries, sourceEnvelope, unprojected);
+
+        // The arcs in the coordinates the output is written in. Simplification is measured
+        // in the units of the tolerances, which are degrees, and taking the arcs through
+        // the same memo as the shapes means an arc coordinate and the shape coordinate it
+        // became are literally the same value.
+        Dictionary<Arc, Coordinate[]> arcs = arcGraph.Arcs.ToDictionary(
+            arc => arc,
+            arc => arc.GetFullCoordinates()
+                .Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected))
+                .ToArray());
+
+        Country[] written = countries
+            .Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState)
+            .ToArray();
 
         // After unprojecting and before writing, so that what is checked is as close to
         // what is written as it can be. Rounding to the output decimals happens as the file
         // is written and can only bring two coordinates together, never separate them, so
         // sharing here is sharing in the file.
         //
-        // One pass per layer written, because each is a partition in its own right. The two
+        // One pass per layer, because each is a partition in its own right. The two
         // together are not: a border between two countries is also the edge of a substate,
         // so segments would legitimately come up three times.
-        this.verificationService.VerifySharing(national, arcGraph, true);
-        this.verificationService.VerifySharing(substates, arcGraph, false);
+        this.verificationService.VerifySharing(national, GetOneSided(arcs, null, droppedNational));
+        this.verificationService.VerifySharing(substates, null);
 
-        await this.WriteGeoJsonAsync(
-                countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState),
-                outFile)
-            .ConfigureAwait(false);
-        await this.WriteGeoJsonAsync(
-                countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState),
-                GetOutFile(outFile, "-low"),
-                0.01)
-            .ConfigureAwait(false);
-        await this.WriteGeoJsonAsync(
-                countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState),
-                GetOutFile(outFile, "-medium"),
-                0.001)
-            .ConfigureAwait(false);
-        await this.WriteGeoJsonAsync(
-                countries.Where(country => country.Type is CountryType.UnitaryState or CountryType.FederatedState),
-                GetOutFile(outFile, "-no-substates"))
-            .ConfigureAwait(false);
-        await this.WriteGeoJsonAsync(
-                countries.Where(country => country.Type is CountryType.FederalState),
-                GetOutFile(outFile, "-only-substates"))
-            .ConfigureAwait(false);
+        await WriteGeoJsonAsync(written, outFile).ConfigureAwait(false);
+        await WriteGeoJsonAsync(national, GetOutFile(outFile, "-no-substates")).ConfigureAwait(false);
+        await WriteGeoJsonAsync(substates, GetOutFile(outFile, "-only-substates")).ConfigureAwait(false);
+
+        // The coarse outputs are simplified by arc and not by polygon: which vertices go is
+        // decided once for each arc, and then those coordinates are dropped wherever they
+        // appear. Simplifying each polygon on its own, as this did before, gives the two
+        // countries either side of a border different geometry and undoes the one guarantee
+        // the whole pipeline is built for.
+        foreach ((string Suffix, double Tolerance) output in new[]
+                     {
+                         (Suffix: "-medium", Tolerance: MediumTolerance),
+                         (Suffix: "-low", Tolerance: LowTolerance),
+                     })
+        {
+            HashSet<(double X, double Y)> removed = this.SelectRemoved(arcs, output.Tolerance);
+            Log.Information(
+                "Simplifying at {Tolerance} removes {Removed} of the {Total} distinct coordinates in the arcs.",
+                output.Tolerance,
+                removed.Count,
+                arcs.Values.Sum(line => line.Length - 1));
+
+            // Checked on the national layer rather than on what is written, because that is
+            // the layer covering the land and so the only one with a coast to be compared
+            // against. The coordinates dropped are the same for either set.
+            Country[] simplified = this.Filter(national, removed);
+            Log.Information(
+                "Simplifying leaves {Rings} of the {Total} rings of the national layer standing.",
+                CountRings(simplified),
+                CountRings(national));
+            this.verificationService.VerifySharing(simplified, GetOneSided(arcs, removed, droppedNational));
+            await WriteGeoJsonAsync(this.Filter(written, removed), GetOutFile(outFile, output.Suffix))
+                .ConfigureAwait(false);
+        }
     }
 
     private sealed class CoordinateSequenceEqualityComparer : EqualityComparer<CoordinateSequence>

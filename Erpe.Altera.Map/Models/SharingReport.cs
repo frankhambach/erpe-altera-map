@@ -12,11 +12,9 @@ public sealed record SharingReport(
     int OwnCountry,
     int UsedOnce,
     int Excess,
-    int CoastSegments)
+    int CoastSegments,
+    int Unpaired)
 {
-    // How far the segments used once fall short of the coast, as a fraction of it. Zero
-    // when there is nothing to compare against.
-    public double Shortfall => this.CoastSegments == 0
-        ? 0.0
-        : (this.CoastSegments - this.UsedOnce) / (double)this.CoastSegments;
+    // What share of the boundary inland has only one side. Zero is the whole point.
+    public double UnpairedShare => this.Segments == 0 ? 0.0 : this.Unpaired / (double)this.Segments;
 }

@@ -16,20 +16,23 @@ using Serilog;
 
 public sealed class VerificationService : IVerificationService
 {
-    // How far the segments used once may fall short of the coast before the shortfall
-    // means the borders are not being shared.
+    // What share of the boundary may have only one side to it before this is a break rather
+    // than a residue. It is not zero, and that is an open question rather than a design: on
+    // this map 11,785 segments of boundary, 0.878% of it, are neither coast nor lake shore
+    // nor the edge of a face left out in 6a, and where they come from is not yet known. The
+    // share rises to 4.882% in the coarsest output, not because simplification breaks
+    // anything - the count falls to 4,889 - but because simplification takes away the
+    // paired boundary much faster than the unpaired.
     //
-    // Measured both ways. On this map the shortfall is 0.152%, which is the four faces
-    // dropped for a self-crossing ring; with the sharing deliberately broken - every ring
-    // thinned on its own, which is the failure per-polygon simplification causes - it is
-    // 34.057%. Anything from half a percent to thirty would separate those two cases
-    // identically, so this sits in the middle of a very wide valley.
-    private const double MaximumShortfall = 0.02;
+    // So this is set to catch a break and not the residue: twice the worst figure a sound
+    // run produces, against the better part of the boundary that a real break produces -
+    // thinning every ring on its own, which is what per-polygon simplification does, loses
+    // three quarters of all sharing.
+    private const double MaximumUnpairedShare = 0.10;
 
-    public SharingReport VerifySharing(IEnumerable<Country> countries, ArcGraph arcGraph, bool coversTheLand)
+    public SharingReport VerifySharing(IEnumerable<Country> countries, IEnumerable<Coordinate[]>? coastLines)
     {
         ArgumentNullException.ThrowIfNull(countries);
-        ArgumentNullException.ThrowIfNull(arcGraph);
 
         // Keyed on the coordinates themselves, compared exactly. That is the whole point:
         // two countries either side of one border have to carry the same numbers, not
@@ -48,6 +51,10 @@ public sealed class VerificationService : IVerificationService
             }
         }
 
+        HashSet<Segment> coast = GetCoast(coastLines);
+        int unpaired = coastLines == null
+            ? 0
+            : uses.Count(pair => (pair.Value.Count == 1) && !coast.Contains(pair.Key));
         SharingReport report = new SharingReport(
             segments,
             uses.Values.Count(use => use.IsShared),
@@ -55,9 +62,10 @@ public sealed class VerificationService : IVerificationService
             uses.Values.Count(use => use.IsOwnCountry),
             uses.Values.Count(use => use.Count == 1),
             uses.Values.Count(use => use.Count > 2),
-            coversTheLand ? CountCoastSegments(arcGraph) : 0);
+            coast.Count,
+            unpaired);
 
-        Report(report, coversTheLand);
+        Report(report, coastLines != null);
 
         return report;
     }
@@ -83,9 +91,7 @@ public sealed class VerificationService : IVerificationService
 
             ++added;
             bool ordered = (start.X < end.X) || ((start.X <= end.X) && (start.Y < end.Y));
-            Segment segment = ordered
-                ? new Segment(start.X, start.Y, end.X, end.Y)
-                : new Segment(end.X, end.Y, start.X, start.Y);
+            Segment segment = GetSegment(start, end);
             bool forward = ordered != reverse;
             uses[segment] = uses.TryGetValue(segment, out Uses existing)
                 ? existing.With(country, forward)
@@ -106,13 +112,33 @@ public sealed class VerificationService : IVerificationService
         return total / 2.0;
     }
 
-    private static int CountCoastSegments(ArcGraph arcGraph)
+    // The coast as the same canonical segments the countries are counted in, so that a
+    // segment used once can be asked whether it is coast or an unpaired border.
+    private static HashSet<Segment> GetCoast(IEnumerable<Coordinate[]>? coastLines)
     {
-        return arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake)
-            .Sum(arc => arc.GetFullCoordinates().Length - 1);
+        HashSet<Segment> coast = [];
+        foreach (Coordinate[] line in coastLines ?? [])
+        {
+            for (int i = 0; i < (line.Length - 1); ++i)
+            {
+                if (!line[i].Equals2D(line[i + 1]))
+                {
+                    coast.Add(GetSegment(line[i], line[i + 1]));
+                }
+            }
+        }
+
+        return coast;
     }
 
-    private static void Report(SharingReport report, bool coversTheLand)
+    private static Segment GetSegment(Coordinate start, Coordinate end)
+    {
+        return ((start.X < end.X) || ((start.X <= end.X) && (start.Y < end.Y)))
+            ? new Segment(start.X, start.Y, end.X, end.Y)
+            : new Segment(end.X, end.Y, start.X, start.Y);
+    }
+
+    private static void Report(SharingReport report, bool hasCoast)
     {
         Log.Information(
             "Checked sharing over {Segments} segments: {Shared} are used by two countries from both sides with "
@@ -132,30 +158,33 @@ public sealed class VerificationService : IVerificationService
                 report.Excess);
         }
 
-        if (!coversTheLand)
+        if (!hasCoast)
         {
             return;
         }
 
-        if (Math.Abs(report.Shortfall) > MaximumShortfall)
+        if (report.UnpairedShare > MaximumUnpairedShare)
         {
             Log.Error(
-                "The {UsedOnce} segments used once should be the coast and the lake shores, of which the graph "
-                + "has {CoastSegments}. A difference of {Shortfall:0.000%} is far more than the faces left out "
-                + "of the output can account for, so borders are not being shared exactly.",
+                "{Unpaired} of the {UsedOnce} segments used once are neither coast nor lake shore nor the edge "
+                + "of a face left out, which is {UnpairedShare:0.000%} of the boundary. Borders are not being "
+                + "shared.",
+                report.Unpaired,
                 report.UsedOnce,
-                report.CoastSegments,
-                report.Shortfall);
+                report.UnpairedShare);
 
             return;
         }
 
         Log.Information(
-            "The {UsedOnce} segments used once account for the {CoastSegments} coast and lake segments in the "
-            + "graph to {Shortfall:0.000%}, so what is not shared is the coast and borders are shared exactly.",
+            "Of the {Segments} segments, {Shared} are shared exactly and {OneSided} have one side to them, of "
+            + "which {Unpaired} ({UnpairedShare:0.000%} of the boundary) are neither coast nor lake shore nor "
+            + "the edge of a face left out and remain unaccounted for.",
+            report.Segments,
+            report.Shared,
             report.UsedOnce,
-            report.CoastSegments,
-            report.Shortfall);
+            report.Unpaired,
+            report.UnpairedShare);
     }
 
     // One segment, as the two coordinates that bound it, ordered so that both sides of a
