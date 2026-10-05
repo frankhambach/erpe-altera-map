@@ -441,8 +441,12 @@ already passed through, where the face is pinched to a point or a hole touches i
 That is one ring in the graph but it crosses itself as geometry, and
 NetTopologySuite rejects it. Cutting the ring at every such point into the lobes it is
 really made of took the losses from **131 faces covering 1,363,675 square units — 23% of
-the land — down to 8 faces and 61,230**. This is the same unlooping the drawn shapes get
+the land — down to 5 faces and 61,230**. This is the same unlooping the drawn shapes get
 in 2a, for the same reason.
+
+(Both figures used to be quoted one count higher — 8 rather than 5 — because what was
+counted was invalid lobes rather than faces, and three of these faces produce two invalid
+lobes each. The area never changed.)
 
 **6b.** Unprojection is memoized per coordinate, as set up in Phase 0b, so both sides of a
 border receive literally the same output values.
@@ -464,16 +468,51 @@ written.
 
 Still to do:
 
-- **8 faces covering 61,230 square units, about 1% of the land, still trace to a ring that
+- **5 faces covering 61,230 square units, about 1% of the land, still trace to a ring that
   crosses itself** and are left out. Unlooping does not reach these, so they are not simple
   self-touches; the likely cause is arcs that overlap collinearly rather than crossing at a
-  point, which is the same defect the lake clip fixed in 2c-bis but for the sea coast.
+  point, which is the same defect the lake clip fixed in 2c-bis but for the sea coast. They
+  are written out on their own by `--debug-svg`, below.
 - **6d, arc-based simplification.** `VisvalingamSimplificationService` still simplifies each
   polygon independently, which gives the two sides of a border different geometry and
   undoes the guarantee. The `-low` and `-medium` outputs are affected.
 - **6e, TopoJSON.**
 - **The exact-sharing check in Phase 7 has not been run.** Until it has, assembling by
   union rather than by walking the arcs is an assumption, not a verified property.
+
+## Intermediate output for inspection — `--debug-svg`
+
+The stages between the input and the GeoJSON are not otherwise visible: a face is a list
+of directed arcs and a weld is a node identity, neither of which can be looked at. `convert
+--debug-svg` writes four SVG files beside the output, named after it, **in the coordinates
+of the source map and with no projection applied**, so each one can be opened on top of the
+file it was read from.
+
+| File | Stage | Contents |
+| --- | --- | --- |
+| `<out>-coast.svg` | after 2c and 3 | `Coast` and `Lake` arcs, coloured apart, with a dot at every node |
+| `<out>-borders.svg` | after 3 | `Border` and `Substate` arcs, with a dot at every node |
+| `<out>-faces.svg` | after 5, national pass | every traced face as one path, shell and holes as subpaths |
+| `<out>-dropped.svg` | after 6a | only the faces left out because their ring crosses itself |
+
+Each arc carries `data-arc-id` and `data-kind`, each node `data-node-id`, and each face
+`data-face-id` and, where it has one, `data-owner` — so a face or an arc named in a log
+line or a warning can be found in the file by searching for its identifier.
+
+The faces are written **between the national and the substate pass**, because a face inside
+a substate belongs to a country and to a substate both and the second pass overwrites the
+owner with the substate; that is the only point at which the faces carry the national
+owner. A face with no `data-owner` is grey: the ocean, a lake, or ground the border network
+enclosed that nothing claims. Face colours otherwise come from the identifier by golden
+angle, which is only there to tell neighbours apart.
+
+The nodes are the point of the two arc files. Welding is what the arc graph rests on, and a
+node is where it decided two drawn ends were meant to be the same point.
+
+Verified against `Altera_Data_Generating_Map(13).svg`: 6728 coast and lake arcs on 6728
+nodes, 3118 border and substate arcs on 2765, all 7129 faces with 6656 of them owned, and
+the 5 dropped faces. All four parse as XML, which is also the check that they are well
+formed.
 
 ## Phase 7 — verification
 

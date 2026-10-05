@@ -16,8 +16,9 @@ It also requires [mapshaper](https://github.com/mbloch/mapshaper) to be installe
 Converts an SVG world map into GeoJson. This expects the SVG file to contain an SVG group with the ID `Rim` containing the outline of the projected world map. Only shapes within SVG groups with IDs `Country_Shapes` or `Substate_Shapes` will be converted to GIS data.
 
 ```
-erpe-altera-map convert --in <file> --out <file>
+erpe-altera-map convert --in <file> --out <file> [--debug-svg]
 ```
 
 * `--in` The SVG file to read country shapes from.
 * `--out` The path of the GeoJson file to write.
+* `--debug-svg` Also write the intermediate stages of the conversion beside the output as SVG, in the coordinates of the source map: `-coast` and `-borders` for the welded arcs, `-faces` for everything the border network encloses, and `-dropped` for the faces that were left out. See `docs/topology-pipeline.md`.

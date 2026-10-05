@@ -253,33 +253,13 @@ public sealed class FaceAssignmentService : IFaceAssignmentService
 
     private Polygon CreatePolygon(ImmutableArray<DirectedArc> ring)
     {
-        List<Coordinate> coordinates = [];
-        foreach (DirectedArc directed in ring)
-        {
-            Coordinate[] arcCoordinates = directed.Arc.GetFullCoordinates();
-            if (directed.IsReversed)
-            {
-                Array.Reverse(arcCoordinates);
-            }
-
-            foreach (Coordinate coordinate in arcCoordinates)
-            {
-                if ((coordinates.Count == 0) || !coordinates[^1].Equals2D(coordinate))
-                {
-                    coordinates.Add(coordinate);
-                }
-            }
-        }
-
+        List<Coordinate> coordinates = ring.GetCoordinates();
         if (coordinates.Count < 3)
         {
             return Polygon.Empty;
         }
 
-        if (!coordinates[0].Equals2D(coordinates[^1]))
-        {
-            coordinates.Add(coordinates[0]);
-        }
+        coordinates.Add(coordinates[0]);
 
         return this.geometryFactory.CreatePolygon(coordinates.ToArray());
     }

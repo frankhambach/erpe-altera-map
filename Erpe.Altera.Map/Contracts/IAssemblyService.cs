@@ -9,5 +9,7 @@ using Erpe.Altera.Map.Models;
 
 public interface IAssemblyService
 {
-    void Assemble(ArcGraph arcGraph, IEnumerable<Country> countries);
+    // Returns the faces that were left out, which are the ones whose traced ring cannot be
+    // made into valid geometry.
+    IReadOnlyList<Face> Assemble(ArcGraph arcGraph, IEnumerable<Country> countries);
 }

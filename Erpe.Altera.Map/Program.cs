@@ -55,6 +55,7 @@ internal static class Program
             services.AddTransient<IProjectionService, WinkelTripelProjectionService>();
             services.AddTransient<ITracerService, TracerService>();
             services.AddTransient<ICoastlineService, CoastlineService>();
+            services.AddTransient<IDiagnosticsService, DiagnosticsService>();
             services.AddTransient<ITopologyService, TopologyService>();
             services.AddTransient<ICorrectionService, CorrectionService>();
             services.AddTransient<IFaceAssignmentService, FaceAssignmentService>();

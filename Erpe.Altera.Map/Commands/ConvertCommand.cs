@@ -64,6 +64,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly ICorrectionService correctionService;
 
+    private readonly IDiagnosticsService diagnosticsService;
+
     private readonly IFaceAssignmentService faceAssignmentService;
 
     private readonly GeometryFactory geometryFactory;
@@ -88,6 +90,7 @@ internal sealed class ConvertCommand : Command
         ICorrectionService correctionService,
         IFaceAssignmentService faceAssignmentService,
         ISimplificationService simplificationService,
+        IDiagnosticsService diagnosticsService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
     {
@@ -100,14 +103,19 @@ internal sealed class ConvertCommand : Command
         this.correctionService = correctionService;
         this.faceAssignmentService = faceAssignmentService;
         this.simplificationService = simplificationService;
+        this.diagnosticsService = diagnosticsService;
         this.geometryFactory = geometryFactory;
 
         Option<FileInfo> inOption = new("--in", "The SVG file to read country shapes from.");
         Option<FileInfo> outOption = new("--out", "The GeoJson file to write.");
+        Option<bool> debugOption = new(
+            "--debug-svg",
+            "Write the coastline, the welded borders, the faces and the dropped faces beside the output as SVG.");
 
         this.AddOption(inOption);
         this.AddOption(outOption);
-        this.SetHandler(this.HandleAsync, inOption, outOption);
+        this.AddOption(debugOption);
+        this.SetHandler(this.HandleAsync, inOption, outOption, debugOption);
     }
 
     private static (string Name, CountryType Type)? GetName(SvgElement element, SvgElement[] shapesElements)
@@ -178,6 +186,18 @@ internal sealed class ConvertCommand : Command
             };
 
         return (name, type);
+    }
+
+    // The debug files sit beside the output and carry the same stem, so a run's stages stay
+    // together and a second run with another output name does not overwrite them.
+    private static FileInfo GetDebugFile(FileInfo outFile, string suffix)
+    {
+        return new FileInfo(
+            outFile.DirectoryName
+            + Path.DirectorySeparatorChar
+            + Path.GetFileNameWithoutExtension(outFile.Name)
+            + suffix
+            + ".svg");
     }
 
     private static FileInfo GetOutFile(FileInfo outFile, string suffix = "-no-substates")
@@ -277,7 +297,7 @@ internal sealed class ConvertCommand : Command
             rimPoints.Max(point => point.Y));
     }
 
-    private async Task HandleAsync(FileInfo inFile, FileInfo outFile)
+    private async Task HandleAsync(FileInfo inFile, FileInfo outFile, bool debugSvg)
     {
         SvgDocument document = SvgDocument.Open<SvgDocument>(inFile.FullName);
         Envelope sourceEnvelope = this.GetEnvelope(document);
@@ -337,6 +357,18 @@ internal sealed class ConvertCommand : Command
 
         this.correctionService.Weld(arcGraph, WeldTolerance);
 
+        if (debugSvg)
+        {
+            await this.diagnosticsService.WriteArcsAsync(
+                    arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake),
+                    GetDebugFile(outFile, "-coast"))
+                .ConfigureAwait(false);
+            await this.diagnosticsService.WriteArcsAsync(
+                    arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Border or ArcKind.Substate),
+                    GetDebugFile(outFile, "-borders"))
+                .ConfigureAwait(false);
+        }
+
         this.topologyService.BuildFaces(arcGraph);
 
         // One pass per layer, because a substate shape lies inside its country's shape and
@@ -349,9 +381,27 @@ internal sealed class ConvertCommand : Command
         Country[] substates = countries.Where(country => country.Type is CountryType.FederalState).ToArray();
 
         this.faceAssignmentService.Assign(arcGraph, national, true);
-        this.assemblyService.Assemble(arcGraph, national);
+        IReadOnlyList<Face> dropped = this.assemblyService.Assemble(arcGraph, national);
+
+        if (debugSvg)
+        {
+            // Between the two passes, because a face inside a substate belongs to a country
+            // and to a substate both and the second pass overwrites the owner with the
+            // substate. This is the only point at which the faces carry the national owner.
+            await this.diagnosticsService.WriteFacesAsync(arcGraph.Faces, GetDebugFile(outFile, "-faces"))
+                .ConfigureAwait(false);
+        }
+
         this.faceAssignmentService.Assign(arcGraph, substates, false);
-        this.assemblyService.Assemble(arcGraph, substates);
+        IReadOnlyList<Face> substateDropped = this.assemblyService.Assemble(arcGraph, substates);
+
+        if (debugSvg)
+        {
+            await this.diagnosticsService.WriteFacesAsync(
+                    dropped.Union(substateDropped),
+                    GetDebugFile(outFile, "-dropped"))
+                .ConfigureAwait(false);
+        }
 
         this.Unproject(countries, sourceEnvelope);
 
