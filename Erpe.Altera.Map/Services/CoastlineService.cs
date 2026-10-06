@@ -10,6 +10,7 @@ using System.Linq;
 using Erpe.Altera.Map.Contracts;
 using Erpe.Altera.Map.Models;
 
+using NetTopologySuite.Algorithm;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.OverlayNG;
@@ -48,6 +49,25 @@ public sealed class CoastlineService : ICoastlineService
     // resolution of roughly 1.75 units between points.
     private const double ClipMargin = 1E-3;
 
+    // How close a run of shoreline has to come back to where it started to count as having
+    // doubled back on itself. It is also the most that filling one can move the shoreline,
+    // since the run is replaced by the vertex it set out from, and half a unit is under a
+    // third of the drawing's own resolution.
+    private const double MaximumSlitWidth = 0.5;
+
+    // How long the out and back has to be. This is what keeps the coastline's own jitter out.
+    // Scanning for runs of a fifth of a unit and up finds 51,923 of them that enclose sea
+    // with a small radius, and 51,541 of those are shorter than 0.6 units: two consecutive
+    // drawn segments folding onto each other. The population is down to two by one unit,
+    // which is where the gaps between shapes begin.
+    private const double MinimumSlitLength = 1.0;
+
+    // How far ahead to look for the way back, which is what keeps the scan quadratic in
+    // practice rather than over the whole of a ring that can run to 118,800 points. The
+    // longest gap filled is reported, so a figure creeping up towards this one is the sign
+    // that the search is being cut short.
+    private const double MaximumSlitSearch = 50.0;
+
     private readonly CoordinateSequenceFactory coordinateSequenceFactory;
 
     private readonly GeometryFactory geometryFactory;
@@ -80,13 +100,20 @@ public sealed class CoastlineService : ICoastlineService
             .ToArray();
 
         List<Polygon> lakes = [];
+        List<(double Radius, double Length)> slits = [];
+        List<double> keptInlets = [];
         int lakeCount = 0;
         int gapCount = 0;
         double gapArea = 0.0;
         int ambiguousCount = 0;
         foreach (Polygon polygon in land)
         {
-            arcGraph.AddArc(ArcKind.Coast, polygon.Shell.CoordinateSequence);
+            // Only the shells. A gap enclosed in a lake is a hole of the lake's own and not
+            // what this is for, and the sign that tells a slit from a spit is the other way
+            // round on a ring that bounds water rather than land.
+            arcGraph.AddArc(
+                ArcKind.Coast,
+                this.coordinateSequenceFactory.Create(FillSlits(polygon.Shell, slits, keptInlets)));
 
             foreach (LinearRing hole in polygon.Holes)
             {
@@ -125,6 +152,24 @@ public sealed class CoastlineService : ICoastlineService
             clipped,
             removed);
 
+        if (slits.Count > 0)
+        {
+            // Both ends of the threshold, every run, because the threshold cuts through a
+            // population rather than a gap in one. If these two ever stop bracketing it
+            // closely the shape of that population has changed and the figure wants
+            // re-measuring rather than nudging.
+            Log.Information(
+                "Filled {SlitCount} gaps between shapes that reach the sea rather than being enclosed as a hole, "
+                + "{SlitLength:0.00} units of shoreline in all and the longest of them {Longest:0.00}. The "
+                + "widest filled measures {Widest:0.#####} on the area to length ratio the holes are judged by, "
+                + "the narrowest inlet left alone {Narrowest:0.#####}.",
+                slits.Count,
+                slits.Sum(slit => slit.Length),
+                slits.Max(slit => slit.Length),
+                slits.Max(slit => slit.Radius),
+                keptInlets.Count == 0 ? MaximumGapAreaToLengthRatio : keptInlets.Min());
+        }
+
         if (ambiguousCount > 0)
         {
             Log.Warning(
@@ -135,7 +180,120 @@ public sealed class CoastlineService : ICoastlineService
                 LakeRatioLowerBound);
         }
 
-        return land.Sum(polygon => polygon.Area) + gapArea + lakes.Sum(lake => lake.Area);
+        // The ground the filled slits used to take out of the land is land again now, and the
+        // hydraulic radius times the length of a slit is the area it covered.
+        return land.Sum(polygon => polygon.Area)
+            + slits.Sum(slit => slit.Radius * slit.Length)
+            + gapArea
+            + lakes.Sum(lake => lake.Area);
+    }
+
+    // A gap between two country shapes is a hole in the union and the test above throws it
+    // away, unless it happens to reach the sea: then it is not a hole at all but a slit in
+    // the shell, which the union walks up one wall of and back down the other. Nothing
+    // encloses the ground beside such a slit, so the border drawn along the same line gets
+    // traced into the outline of the landmass rather than into a face, and the countries on
+    // either side of it are left with no ground at all. That is what left Maharath and
+    // Sanjan with nothing: Maharath's shape is drawn 0.03 units off Sanjan's for the first
+    // 3.77 units inland from the coast they share, and the wedge between the two opens onto
+    // the sea.
+    //
+    // Three tests, cheapest first. The run has to come back to within MaximumSlitWidth of
+    // where it started, it has to be at least MinimumSlitLength long, and it has to enclose
+    // sea rather than land. The last is what does most of the work: of the 9352 runs on this
+    // map that come back on themselves at all, 8778 enclose land and are headlands, spits and
+    // narrow capes that have to be left exactly as they are, and 574 enclose sea.
+    //
+    // What is left after those three is judged by the hydraulic radius of Phase 2, because a
+    // gap is a gap whether it is enclosed as a hole or open to the sea. Here, though, that
+    // figure is a judgement and not a measurement: those 574 runs have radii running all the
+    // way from 0.0005 to 1.0, thickest between 0.07 and 0.12, and they thin out across the
+    // threshold rather than stopping - 18 of them in the 0.02 below 0.15 and 6 in the 0.02
+    // above, the widest filled measuring 0.1474 against the 0.1522 of the narrowest left
+    // alone. There is no empty valley to put the line in, as there is for the holes.
+    //
+    // What makes the figure safe is that the answer does not depend on it. Run at 0.12, 0.15
+    // and 0.20 the number of gaps filled moves from 460 to 505 to 508, and every number that
+    // matters is identical: 47 arcs separating nothing, 0.301% of the land inside no face, 8
+    // countries without geometry. The gaps that cost a country its ground are far below any
+    // of those thresholds.
+    //
+    // Known limitation: a slit straddling the ring's own first vertex is cut in part rather
+    // than whole, because the closing vertex is never removed and the scan does not wrap.
+    // Nothing here detects that case, so it is not known whether this map has one.
+    private static Coordinate[] FillSlits(
+        LinearRing ring,
+        List<(double Radius, double Length)> slits,
+        List<double> kept)
+    {
+        List<Coordinate> coordinates = [.. ring.Coordinates];
+        bool counterClockwise = Orientation.IsCCW(ring.Coordinates);
+        int i = 0;
+        while (i < (coordinates.Count - 2))
+        {
+            int found = -1;
+            double radius = 0.0;
+            double length = 0.0;
+            double run = 0.0;
+            double area = 0.0;
+            for (int j = i + 1; j < (coordinates.Count - 1); ++j)
+            {
+                run += coordinates[j - 1].Distance(coordinates[j]);
+                area += (coordinates[j - 1].X * coordinates[j].Y) - (coordinates[j].X * coordinates[j - 1].Y);
+                if (run > MaximumSlitSearch)
+                {
+                    break;
+                }
+
+                if ((run < MinimumSlitLength) || (coordinates[i].Distance(coordinates[j]) > MaximumSlitWidth))
+                {
+                    continue;
+                }
+
+                // Closing the loop before taking its area is not optional. The shoelace
+                // terms are twice the signed area of a triangle with the origin, so an
+                // unclosed chain out at x = 4412 carries a residual of some 150 square
+                // units where the slit itself covers 0.11.
+                double enclosed = (area
+                    + ((coordinates[j].X * coordinates[i].Y) - (coordinates[i].X * coordinates[j].Y))) / 2.0;
+                double ratio = Math.Abs(enclosed) / run;
+                if ((enclosed > 0.0) != counterClockwise)
+                {
+                    if (ratio <= MaximumGapAreaToLengthRatio)
+                    {
+                        found = j;
+                        radius = ratio;
+                        length = run;
+                    }
+                    else
+                    {
+                        kept.Add(ratio);
+                    }
+                }
+
+                // The first return and no other. A slit's two walls are next to each other
+                // in the ring, so the first place it comes back to where it started, once it
+                // has gone anywhere at all, is the other wall; if what comes back first is
+                // something else then this is not the mouth of a slit, and carrying on to
+                // look for a thin loop further along would be looking for one that is not
+                // there. On this map it makes no difference either way, both ways round
+                // filling the same 505.
+                break;
+            }
+
+            // A ring needs four coordinates to enclose anything, so a cut that would take it
+            // below that is no cut at all.
+            if ((found < 0) || ((coordinates.Count - (found - i)) < 4))
+            {
+                ++i;
+                continue;
+            }
+
+            slits.Add((radius, length));
+            coordinates.RemoveRange(i + 1, found - i);
+        }
+
+        return [.. coordinates];
     }
 
     // A piece that still ends where the arc did keeps the arc's node; a piece that ends at

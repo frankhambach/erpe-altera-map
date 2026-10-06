@@ -107,6 +107,68 @@ public class CoastlineServiceTests
 
     [AutoCustomizedData]
     [Test]
+    public void AddArcs_ShouldFillSlit_WhenAGapBetweenTwoShapesReachesTheSea(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // Two shapes that should have met along x = 40 leave a wedge between them 0.03 wide
+        // and 20 deep. Because the wedge opens onto the sea the union keeps it as a slit in
+        // the shell, where the gap test only ever sees a hole, and the ground beside it is
+        // left enclosed by nothing.
+        double area = new CoastlineService(geometryFactory).AddArcs(
+            [CreateNotchedSquare(geometryFactory, 40.0, 0.03, 20.0)],
+            arcGraph);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().NotContain(coordinate => (coordinate.Y > 0.0) && (coordinate.Y < 100.0));
+
+        // The ground the slit used to take out of the land counts towards what the faces
+        // have to come to, since the coast no longer goes round it.
+        area.Should().BeApproximately(10000.0, 0.01);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepInlet_WhenTheRunEnclosesEnoughWater(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // 0.45 wide and 1.2 deep comes to 0.19 on the area to length ratio, where the gaps
+        // between shapes reach 0.054 at the widest. That is a narrow inlet of sea, and the
+        // coast has to keep going round it.
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreateNotchedSquare(geometryFactory, 40.0, 0.45, 1.2)],
+            arcGraph);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().Contain(coordinate => (coordinate.Y > 1.0) && (coordinate.Y < 99.0));
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepSpit_WhenTheRunEnclosesLand(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The same shape the other way up: a spit 0.03 wide reaching 20 units out to sea.
+        // It doubles back on itself exactly as a slit does and is every bit as thin, but it
+        // encloses land, and however thin it is it belongs to the country.
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreateNotchedSquare(geometryFactory, 40.0, 0.03, -20.0)],
+            arcGraph);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().Contain(coordinate => coordinate.Y < 0.0);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void AddArcs_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
@@ -135,6 +197,27 @@ public class CoastlineServiceTests
         // Matches the fixed model Program.cs installs, rather than letting the fixture
         // invent a scale that would quantise the coordinates used here.
         return new GeometryFactory(new PrecisionModel(10000.0), 0, coordinateSequenceFactory);
+    }
+
+    private static Polygon CreateNotchedSquare(
+        GeometryFactory geometryFactory,
+        double notchX,
+        double notchWidth,
+        double notchDepth)
+    {
+        return geometryFactory.CreatePolygon(
+            geometryFactory.CreateLinearRing(
+                [
+                    new Coordinate(0.0, 0.0),
+                    new Coordinate(notchX, 0.0),
+                    new Coordinate(notchX, notchDepth),
+                    new Coordinate(notchX + notchWidth, notchDepth),
+                    new Coordinate(notchX + notchWidth, 0.0),
+                    new Coordinate(100.0, 0.0),
+                    new Coordinate(100.0, 100.0),
+                    new Coordinate(0.0, 100.0),
+                    new Coordinate(0.0, 0.0),
+                ]));
     }
 
     private static Polygon CreatePolygonWithHole(
