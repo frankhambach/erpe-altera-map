@@ -323,12 +323,50 @@ that it came out as land. Growing by 0.001 units, about 6 m against a drawing re
 of 1.75 units, takes those with it. A border that merely ends at the shore is pulled back
 by the same hair and welded onto the ring again in Phase 3.
 
+**2c-ter. Fill the gaps between shapes that reach the sea.** The hole test in 2c only ever
+sees a gap that is *enclosed*. A gap that reaches the coast is not a hole at all: it is a
+slit in the shell, and the union walks up one wall of it and back down the other. Nothing
+then encloses the ground beside the slit, the border drawn along the same line is traced
+into the outline of the landmass rather than into a face, and the countries either side are
+left with no ground at all — which is what left **Maharath and Sanjan** with nothing.
+Maharath's shape is drawn 0.03 units off Sanjan's for the first 3.77 units inland from the
+coast they share, and the wedge between the two opens onto the sea.
+
+A run of shoreline is a slit when it comes back to within 0.5 units of where it started
+after at least a unit of travel, encloses sea rather than land, and measures no more than
+0.15 on the same area-to-length ratio as the holes. The winding is what does most of the
+work: of the 9352 runs on this map that come back on themselves at all, **8778 enclose
+land** — headlands, spits and narrow capes, which have to be left exactly as they are —
+and 574 enclose sea.
+
+**The 0.15 here is a judgement, not a measurement, unlike the one in 2c.** Those 574 runs
+have ratios from 0.0005 to 1.0, thickest between 0.07 and 0.12, and they thin out across
+the threshold rather than stopping: 18 in the 0.02 below it, 6 in the 0.02 above, the
+widest filled measuring 0.1474 against the 0.1522 of the narrowest left alone. There is no
+empty valley to put a line in. What makes it safe is that **the answer does not depend on
+it** — run at 0.12, 0.15 and 0.20 the number of gaps filled moves 460 → 505 → 508 and every
+number that matters is identical: 47 arcs separating nothing, 0.301% of the land inside no
+face, 8 countries without geometry. The gaps that cost a country its ground sit far below
+any of those thresholds.
+
+Measured: 505 gaps filled, 647.26 units of shoreline, which puts 50.5 units² of ground back
+into the land — an average wedge is 1.28 units long and 0.08 wide, well under the drawing's
+own resolution. Both ends of the threshold are logged every run, because a threshold cutting
+through a population wants watching rather than trusting.
+
+Only the shells are repaired. A gap enclosed in a lake is a hole of the lake's own, and the
+sign that tells a slit from a spit is the other way round on a ring that bounds water. A
+slit straddling a ring's own first vertex would be cut in part rather than whole, since the
+closing vertex is never removed; nothing detects that case, so it is not known whether this
+map has one.
+
 **2d.** Coast rings need splitting at the points where Phase 3 attaches a tracer
 endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the noder
 do the splitting. Each ring is therefore added as one closed arc for now.
 
 **Verified** against `Altera_Data_Generating_Map(13).svg`: 5241 coast shells, 462
-lakes kept, 2632 holes discarded as gaps, giving 7140 arcs in total with the tracers.
+lakes kept, 2632 holes discarded as gaps and 505 filled as slits, giving 7140 arcs in total
+with the tracers.
 The discarded holes total 25.7 units² — mean 0.0097, largest 2.09 — against 85,696
 units² of kept lakes, largest 20,032. At 0.03% of all hole area the discards are
 digitizing slivers, not water.
@@ -531,9 +569,10 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **61 of them on this
-map**, 56 `Border` and 5 `Substate`, and the twenty longest are named with their coordinates
-so that `--debug-svg` can find them by `data-arc-id`.
+whatever it was drawn to enclose is left open to what lies outside. **47 of them on this
+map**, down from 61 once 2c-ter and 4f were repairing the two causes found so far, and the
+twenty longest are named with their coordinates so that `--debug-svg` can find them by
+`data-arc-id`.
 
 That list turns out to be the inventory behind three reports that had looked like three
 separate problems:
@@ -541,21 +580,28 @@ separate problems:
 | symptom | what the chain did | where it shows |
 | --- | --- | --- |
 | two countries share a face | failed partway, so the region is not divided | 5b, 14 fused faces |
-| a country gets no ground at all | failed completely, so the region never closes | 4's area check, 0.670% |
+| a country gets no ground at all | failed completely, so the region never closes | 4's area check, 0.301% |
 | an arc end resolves to nothing | fell short of what it should meet | 3d, 1 end at 12.48 units |
 
-Every one of the 14 fused faces has a bridge beside it - Deseret and Arizona on arc 8377,
+Every one of the fused faces has a bridge beside it - Deseret and Arizona on arc 8377,
 Gwennland on 11499, Kovenda on 9496, Bactria and Sogdia on 8565, Vantong on 790, Tuscany on
 948, Kalimantan on 11663, 11625 and 11637 - and arc 9496 sits at 3704.35, 2970.64, which is
-the unresolved end from 3d. Border arc 11733, 144 points from 4424.6, 2025.1 to 4412.9,
-2057.2, is Maharath's own boundary. So the shortfall, the fused faces and the unresolved end
-should converge as the drawn borders are closed, and all three are reported rather than
-repaired, because the repair is a line in the source map.
+the unresolved end from 3d.
 
-**That makes the arcs separating nothing the cause of the land inside no face.** A region
-bounded by one of them is not enclosed, no ring closes around it, and it never becomes a
-face; the 314-arc continental outline runs through Maharath's window and traverses 11733,
-which is how Maharath's ground comes to sit on the sea side of the partition.
+**This list is the inventory of a symptom, not of a cause, and reading it as a cause was
+wrong.** The entry recorded here before — border arc 11733, 144 points from 4424.6, 2025.1 to
+4412.9, 2057.2, "Maharath's own boundary", with the repair being "a line in the source map" —
+had it backwards. Arc 11733 is the body of a border that is drawn perfectly well. What was
+wrong was the *coastline* beside it: a gap between Maharath's shape and Sanjan's, reaching
+the sea, which the union kept as a zero-width slit and the hole test in 2c could never see.
+The border had no choice but to separate nothing, because it was running up a slit whose two
+walls the traversal could not tell it from. 2c-ter fills those, 4f drops the border copies
+left over, and between them the count here falls from 61 to 47 and seven countries get their
+ground back.
+
+So an arc separating nothing is worth reporting, and it is still how these defects announce
+themselves — but each one is a question rather than an answer, and at least some of the
+remaining 47 will have a cause the pipeline can fix too.
 
 **4e. Zero-length arcs are a second, smaller defect of the same family, and were at first
 mistaken for the one above.** Welding and splitting leave two *distinct* nodes at one identical
@@ -573,6 +619,31 @@ lost one step earlier in a region that never closes.
 What it does do, measured on one build with the merge switched off and on, is take the arcs
 that separate nothing from **84 down to 61**. So it is a real repair to the topology, just
 not the one that was being looked for.
+
+**4f. Drop a border that is the coast drawn a second time.** Two arcs joining the same pair
+of nodes and running along each other the whole way are one line drawn twice. Where one is
+coast and the other a border, that is exactly what it is: a border cannot divide land from
+sea. Both copies then leave each of the two nodes they share, the four half-edges interleave
+in the order 4b sorts them into, and a traversal arriving along the coast takes the border as
+its next turn and steps off the shoreline onto it — from where it walks the border network of
+whatever lies inland into the outline of the landmass. That is what left **Siam, Dumarune and
+Sulka** with nothing.
+
+Measured before 2c-ter was repairing anything: 84 pairs of nodes carried both a border and a
+coast arc, 48 of those ran within 0.0413 of each other end to end, the next three were
+0.1667, 0.2192 and 0.5595 apart, and the remaining 33 were alternative routes two units and
+more away. **Any threshold between 0.0413 and 0.1667 picks out the same 48**, so the 0.1 used
+is a measurement. With the slits filled first, 34 are left to drop — 4.11 units of line, the
+furthest 0.0336 from the shore — the rest having gone with the slits they were lying along.
+
+**Length is no part of this test and cannot be.** Dumarune's duplicate is 0.21 units long and
+Sulka's 0.0002, far below anything that could be told apart from a border merely touching the
+shore by how long it ran. What makes them provable is the pair of shared nodes: noding has
+already found that the two lines meet at both ends. A geometric trim was tried first, cutting
+any stretch of border that stays within 0.02 of the shore for at least half a unit — it finds
+10 stretches and recovers Siam, but it cannot see Dumarune's 0.21 or Sulka's 0.0002, and run
+*before* 2c-ter it cuts away the one border dividing Maharath from Sanjan and the two come
+out as a single face.
 
 A separate hazard found looking for this one: **109 nodes have two half-edges leaving at
 genuinely equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore
@@ -945,6 +1016,13 @@ new export trustworthy.
    thinned control loses. It is deliberately loose, and it should be tightened the moment the
    11,785 are understood.
 
+   **Measured again after 2c-ter and 4f**, which recovered seven countries between them, the
+   same check reads 265,436 shared and **6,892 unaccounted — 0.513% of the boundary, down
+   from 0.887%**. The figures above are left as they were measured, since the reasoning that
+   got to them stands; where this plan quotes 11,785 as the size of the residue, 6,892 is the
+   current one. The two coarse outputs moved the same way, 2.425% to 2.024% and 4.954% to
+   4.538%.
+
    **The in-run check and the check over the file disagree about one thing, and both are
    right.** Over the file, 102 segments - all of them between Chukcha and Nauka - come up
    shared in the *same* direction. In memory they are properly opposite. The difference is
@@ -988,17 +1066,19 @@ and the collapse-not-delete semantics (0e).
 ## What is left, in the order worth doing it
 
 1. **Dissolve a country by walking its arcs** rather than by unioning its faces. Phase 7
-   item 4 measures the union as following the edges it is given for 260,643 segments of
-   boundary and not for about 11,785, and skipping the union outright takes that residue from
-   11,556 to 4,614 - so this removes about 60% of it by construction rather than by
-   measurement. It is also the alternative this plan named at the outset.
-2. **The remaining 4,614.** Of those, 3,535 segments exist in no arc at all, so something
-   between the faces and the output is inventing coordinates; the unlooping in 6a is the next
-   suspect.
-3. **The 61 arcs that separate nothing**, which is work on the source map rather than on the
-   pipeline, and which should close the area shortfall, most of the 14 fused faces and the
-   last unresolved arc end together. Arc 9496 at 3704.35, 2970.64 is the one with a cause
-   already known.
+   item 4 measures the union as following the edges it is given for the great majority of the
+   boundary and not for a residue now standing at 6,892 segments, and skipping the union
+   outright took that residue from 11,556 to 4,614 when it was measured - about 60% of it
+   removed by construction rather than by measurement. It is also the alternative this plan
+   named at the outset.
+2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
+   all, so something between the faces and the output is inventing coordinates; the unlooping
+   in 6a is the next suspect. Both figures want re-measuring after 1.
+3. **The 47 arcs that separate nothing**, down from 61. Each is a question rather than an
+   answer: two of them turned out to be the coast's fault rather than the border's, and 2c-ter
+   and 4f fixed those in the pipeline, so reading the rest as "work on the source map" — as
+   this plan did — is an assumption and not a finding. Arc 9496 at 3704.35, 2970.64 is still
+   the one with a cause already known, and it is also the unresolved arc end from 3d.
 4. **The 109 nodes where two half-edges leave at genuinely equal angles**, where the order
    falls to `ThenBy(arc.Id)` and is arbitrary. One of them, node 633 at 2440.35, 857.64, lies
    inside Avanarsuaq's dropped face. Breaking those ties needs the arcs compared further
@@ -1006,6 +1086,13 @@ and the collapse-not-delete semantics (0e).
 5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
    sharing failure, but RFC 7946 asks for counter-clockwise shells.
+7. **Eight countries still have no geometry**, down from fifteen: Bopedi, Ligury, Manunan,
+   Mauretania, Padun, Prabang, Sascatchewa and Winnebagee. Each is a region that never closed,
+   and the two causes found so far - a gap in the coast open to the sea, and the coast drawn a
+   second time as a border - are both now repaired, so these eight have a third cause waiting
+   to be found. The method that found the first two is in this plan's history: take one
+   country, dump every arc, node, departure angle and ring in a window around it, and follow
+   the traversal step by step until it turns the wrong way.
 
 ## Order of work (as planned at the start)
 
