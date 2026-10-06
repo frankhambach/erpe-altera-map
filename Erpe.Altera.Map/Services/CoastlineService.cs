@@ -38,6 +38,23 @@ public sealed class CoastlineService : ICoastlineService
 
     private const double LakeRatioLowerBound = 0.19;
 
+    // How far a border tracer may run through a hole, against the hole's own half-perimeter -
+    // its length, for a hole thin enough to have one - before the hole is a gap between two
+    // country shapes rather than a lake. A gap along a border has the border running its whole
+    // length; a lake has at most one poking into it.
+    //
+    // Measured over the 462 holes the ratio above keeps as lakes: two of them come to 18.88
+    // and 8.19, and the rest top out at 1.88, a span of 4.4x with nothing in it. Those two are
+    // the gap between Padun and Kunmin, 2.49 square units with 3.71 units of border running
+    // along it, and a second of 0.98 square units with 1.92 units along it. Both are gaps.
+    //
+    // Known limitation: the measure is elongation-aware, which is the point - a tracer running
+    // the length of a sliver scores far higher than one crossing a blob - but a compact lake
+    // crossed straight through would score about 4, so the figure sits above that rather than
+    // at the middle of the measured span. Nothing on this map comes near: the highest genuine
+    // lake is 1.88.
+    private const double MaximumLakeTracerCrossing = 6.0;
+
     private const double DegenerateLength = 1E-9;
 
     // Ten times the noding grid. Trimming a tracer against a lake leaves a line's worth of
@@ -99,6 +116,15 @@ public sealed class CoastlineService : ICoastlineService
                     this.geometryFactory.PrecisionModel))
             .ToArray();
 
+        // Built once, before the holes are judged, and from the tracers as drawn: 2c-bis has
+        // not trimmed them yet, so a border that runs through a gap is still all there.
+        STRtree<LineString> tracers = new STRtree<LineString>();
+        foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Border or ArcKind.Substate))
+        {
+            LineString line = this.geometryFactory.CreateLineString(arc.GetFullCoordinates());
+            tracers.Insert(line.EnvelopeInternal, line);
+        }
+
         List<Polygon> lakes = [];
         List<(double Radius, double Length)> slits = [];
         List<double> keptInlets = [];
@@ -106,6 +132,7 @@ public sealed class CoastlineService : ICoastlineService
         int gapCount = 0;
         double gapArea = 0.0;
         int ambiguousCount = 0;
+        int crossedCount = 0;
         foreach (Polygon polygon in land)
         {
             // Only the shells. A gap enclosed in a lake is a hole of the lake's own and not
@@ -123,7 +150,19 @@ public sealed class CoastlineService : ICoastlineService
                     ++ambiguousCount;
                 }
 
-                if (ratio < MaximumGapAreaToLengthRatio)
+                // Either test is enough to call a hole a gap, and each catches what the other
+                // cannot. The ratio alone misses a gap wide enough to look like water, which is
+                // what left Padun and Kunmin sharing a face. The crossing alone misses the 868
+                // gaps with no tracer anywhere near them.
+                double crossing = ratio < MaximumGapAreaToLengthRatio
+                    ? 0.0
+                    : this.GetTracerCrossing(hole, tracers, ratio);
+                if (crossing > MaximumLakeTracerCrossing)
+                {
+                    ++crossedCount;
+                }
+
+                if ((ratio < MaximumGapAreaToLengthRatio) || (crossing > MaximumLakeTracerCrossing))
                 {
                     ++gapCount;
                     gapArea += this.geometryFactory.CreatePolygon(hole).Area;
@@ -151,6 +190,14 @@ public sealed class CoastlineService : ICoastlineService
             lakes.Sum(lake => lake.Area),
             clipped,
             removed);
+
+        if (crossedCount > 0)
+        {
+            Log.Information(
+                "Discarded {CrossedCount} of those holes as gaps because a border runs through them rather than "
+                + "merely into them, which the area to length ratio had taken for water.",
+                crossedCount);
+        }
 
         if (slits.Count > 0)
         {
@@ -415,6 +462,25 @@ public sealed class CoastlineService : ICoastlineService
         }
 
         return (clipped, removed);
+    }
+
+    // How far the tracers run through a hole, against the hole's own half-perimeter. For a
+    // hole thin enough to be a gap that half-perimeter is its length, so the measure says what
+    // fraction of the gap the border follows; dividing instead by the hydraulic radius, which
+    // is the same thing scaled, keeps the shape of the hole in the answer, and that is what
+    // separates a border following a sliver from one crossing a pool.
+    private double GetTracerCrossing(LinearRing hole, STRtree<LineString> tracers, double ratio)
+    {
+        if (ratio < DegenerateLength)
+        {
+            return 0.0;
+        }
+
+        Polygon polygon = this.geometryFactory.CreatePolygon(hole);
+        double inside = tracers.Query(polygon.EnvelopeInternal)
+            .Sum(tracer => tracer.Intersection(polygon).Length);
+
+        return inside / ratio;
     }
 
     private double GetAreaToLengthRatio(LinearRing hole)

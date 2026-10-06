@@ -107,6 +107,51 @@ public class CoastlineServiceTests
 
     [AutoCustomizedData]
     [Test]
+    public void AddArcs_ShouldDiscardHole_WhenABorderRunsThroughItsWholeLength(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // 20 long and half a unit wide comes to 0.24 on the area to length ratio, above the
+        // 0.15 that tells a gap from a lake, so the ratio alone keeps this as water. A border
+        // running its whole length says otherwise: that is the gap between two shapes that
+        // should have met along it. Padun and Kunmin shared a face for exactly this reason.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create([new Coordinate(5.0, 45.25), new Coordinate(35.0, 45.25)]));
+
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreatePolygonWithHole(geometryFactory, 10.0, 45.0, 20.0, 0.5)],
+            arcGraph);
+
+        arcGraph.Arcs.Should().NotContain(arc => arc.Kind == ArcKind.Lake);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepHole_WhenABorderOnlyReachesIntoIt(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The same hole, with half a unit of border reaching into it rather than twenty running
+        // along it. Borders are drawn over water all the time, which 2c-bis trims back, and
+        // that must not be read as the hole being land.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create([new Coordinate(5.0, 45.25), new Coordinate(10.5, 45.25)]));
+
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreatePolygonWithHole(geometryFactory, 10.0, 45.0, 20.0, 0.5)],
+            arcGraph);
+
+        arcGraph.Arcs.Should().Contain(arc => arc.Kind == ArcKind.Lake);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void AddArcs_ShouldFillSlit_WhenAGapBetweenTwoShapesReachesTheSea(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
