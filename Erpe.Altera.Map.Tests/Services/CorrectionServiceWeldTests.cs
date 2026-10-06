@@ -184,6 +184,51 @@ public class CorrectionServiceWeldTests
 
     [AutoCustomizedData]
     [Test]
+    public void Weld_ShouldDropTheStubAndSplitForItsNeighbour_WhenAStubCollapses(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The stub is shorter than the tolerance, so its own two ends weld to each other and
+        // it becomes a point. A border reaching for the same place joins that group too, and
+        // its end then sits on a node referenced three times - twice by the stub - which is no
+        // longer a loose end, so nothing welds the border to the long arc 0.9 units away. The
+        // stub is dropped in Phase 4 for having no direction, and the border is left dividing
+        // nothing. Ligury and Tuscany came out as one face that way.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (20, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, 0.9), (10.3, 0.9)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10.1, 1.0), (10, 10)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 0.5, 3.0);
+
+        // The stub is gone, and the long arc has been split in two to take the border's end.
+        arcGraph.Arcs.Should().HaveCount(3);
+        arcGraph.Arcs.Should().NotContain(arc => arc.StartNode == arc.EndNode);
+        Arc border = arcGraph.Arcs.Single(arc => arc.EndNode.Coordinate.Equals2D(new Coordinate(10, 10)));
+        arcGraph.Arcs.Where(arc => arc != border)
+            .Should()
+            .Contain(arc => arc.StartNode == border.StartNode)
+            .And.Contain(arc => arc.EndNode == border.StartNode);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Weld_ShouldStillCloseARing_WhenAnArcLongEnoughHasItsOwnEndsMerged(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The other side of the same rule: an arc whose two ends are brought together but
+        // which has real length between them has been closed into a ring, not collapsed, and
+        // has to stay.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (10, 10), (0, 10), (0.4, 0.2)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
+
+        Arc ring = arcGraph.Arcs.Should().ContainSingle().Subject;
+        ring.StartNode.Should().BeSameAs(ring.EndNode);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Weld_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

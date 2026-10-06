@@ -160,6 +160,11 @@ public sealed class CorrectionService : ICorrectionService
 
         int mergedCount = MergeLooseEnds(arcGraph, mergeTolerance);
 
+        // Before the index and before the splitting, which is the whole point of doing it
+        // here: an end that one of these arcs was holding becomes a loose end again, and the
+        // splitting below then welds it onto something real.
+        int collapsedCount = RemoveCollapsedArcs(arcGraph);
+
         // Built after merging, because merging moves nodes and so moves the arc ends with
         // them. Querying an index built before that would search stale positions.
         STRtree<Segment> index = BuildSegmentIndex(arcGraph);
@@ -186,11 +191,12 @@ public sealed class CorrectionService : ICorrectionService
         ApplySplits(arcGraph, splits);
 
         Log.Information(
-            "Welded {MergedCount} ends onto each other within {MergeTolerance} units and split {SplitCount} arcs "
-            + "within {SplitTolerance} to take the rest, {CoastCount} of those on the coast. "
-            + "{UnresolvedCount} ends remain loose.",
+            "Welded {MergedCount} ends onto each other within {MergeTolerance} units, dropped {CollapsedCount} "
+            + "arcs the merge left with no length, and split {SplitCount} arcs within {SplitTolerance} to take "
+            + "the rest, {CoastCount} of those on the coast. {UnresolvedCount} ends remain loose.",
             mergedCount,
             mergeTolerance,
+            collapsedCount,
             splits.Count,
             splitTolerance,
             coastCount,
@@ -245,6 +251,41 @@ public sealed class CorrectionService : ICorrectionService
                 ++nextIndex;
             }
         }
+    }
+
+    // An arc shorter than the merge tolerance has its own two ends welded to each other, and
+    // that has joined nothing: it has collapsed the arc to a point. 29 of them on this map,
+    // 28 border and 1 substate, their lengths running from exactly 0.5 down to 0.007.
+    //
+    // Left in, such an arc does real harm, because of what else was in the group its two ends
+    // merged as. A neighbouring border reaching for the same place joins that group too, and
+    // its end comes to rest on the collapsed arc's node. The node is then referenced three
+    // times, twice by the collapsed arc and once by the border, so it is no longer a loose end
+    // and the splitting below never looks at it. Phase 4 then drops the collapsed arc as
+    // having no direction to be traced by, and the border is left hanging off a node with
+    // nothing else on it: an arc that divides nothing, so the two countries either side of it
+    // come out as one face. That is Ligury and Tuscany, where the border between them, 10.74
+    // units of it, ends on the node of a stub 0.3 units long rather than on the border it was
+    // drawn to meet 0.88 units further on.
+    //
+    // Removing the arc cannot disconnect anything. Its two ends are one node already, so
+    // everything else that meets there still meets there; only the stub itself goes.
+    private static int RemoveCollapsedArcs(ArcGraph arcGraph)
+    {
+        Arc[] collapsed =
+        [
+            .. arcGraph.Arcs.Where(
+                arc => (arc.StartNode == arc.EndNode)
+                    && Array.TrueForAll(
+                        arc.GetFullCoordinates(),
+                        coordinate => coordinate.Equals2D(arc.StartNode.Coordinate))),
+        ];
+        foreach (Arc arc in collapsed)
+        {
+            arcGraph.Arcs.Remove(arc);
+        }
+
+        return collapsed.Length;
     }
 
     // An end is loose when exactly one arc end references it. A node referenced twice is
