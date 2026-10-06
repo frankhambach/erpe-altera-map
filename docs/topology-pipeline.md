@@ -485,37 +485,79 @@ centroid. Union-find rather than pairwise snapping because the old `Snap` sorts 
 transitivity: A→B and B→C can leave A and C apart. 386 of them, and it absorbs the
 short-connector case from 0e.
 
-**3a-bis. Drop the arcs 3a has collapsed, before 3b runs.** An arc shorter than
-`MergeTolerance` has its own two ends welded to each other, and that joins nothing: it
-collapses the arc to a point. **29 of them on this map**, 28 `Border` and 1 `Substate`, their
-lengths running from exactly 0.5 down to 0.007.
+**3a-bis. Drop the arcs 3a has collapsed, before 3b runs.** A tracer whose own two ends 3a
+welded to each other has joined nothing: it has collapsed to a point. **68 of them on this
+map**, 65 `Border` and 3 `Substate`.
 
 Left in place such a stub does real damage, through what else was in the group its two ends
 merged as. A neighbouring border reaching for the same place joins that group too and its end
 comes to rest on the stub's node. That node is now referenced three times — twice by the stub —
 so it is not a loose end, **3b never looks at it**, and the border is never welded to the arc
-it was drawn to meet. Phase 4e then drops the stub for having no direction to be traced by, and
-the border is left hanging off a node with nothing else on it: an arc that divides nothing, so
-the two countries either side of it come out as one face.
+it was drawn to meet. The border is left hanging off a node with nothing else on it: an arc
+that divides nothing, so the two countries either side of it come out as one face.
 
 That is **Ligury and Tuscany**. The border between them, 10.74 units of it, ends on the node of
 a stub 0.3 units long instead of on the border it was drawn to meet 0.88 units further on. In
 `--debug-svg` the stub shows as a single point apparently unconnected to anything, sitting
 exactly where the border ends.
 
+**Collapsed is measured by what the arc encloses, not by where its vertices are.** The test
+here used to ask whether every coordinate of the arc was exactly its node's, and that is only
+the stubs 3a reduced to a single point — it misses the ones that kept a vertex of their own.
+
+That is **Prabang and Vantong**, and the same defect read a second time. Arc 789 is 0.12 units
+of scratch in the source map, its two ends 0.1 units apart, and arc 790's end — 44.13 units of
+the border between the two countries — is drawn *exactly* on the first of them. 3a put all
+three in one group, so node 1577 came out referenced three times and nothing split arc 9324
+where it passes **0.058 units away**. The border dead-ended, one face covered both countries,
+and Prabang got no ground. After the merge arc 789 runs out 0.034 units and straight back,
+which is a point for every purpose that matters and no coordinate of which equals its node.
+
+So the measure is the **hydraulic radius of the loop the closed arc makes**, area over
+perimeter, which for a long thin region is half its width. A spike doubling back encloses
+nothing and scores 0; a ring encloses something and scores on the order of its own size. The
+threshold is **half the merge tolerance**, which says the enclosed region is narrower than the
+distance 3a is allowed to close — so 3a could have made it, and there is nothing in it to keep.
+
+That figure is derived rather than fitted, and the measurement agrees with it. Of the 70 closed
+tracer arcs, 68 run from 0 up to **0.0578** and the other two are **1.1139** and **3.2849** — a
+span of 19× with nothing in it. 0.25 lands within 2% of the middle of that span on a log scale,
+4.3× above the widest spike and 4.5× below the narrowest ring. The two above it are real rings,
+25.6 and 82.7 units round, drawn as loops whose ends 3a closed, and they stay.
+
+**Tracers only, and that restriction is load-bearing rather than tidy.** The coast carries 5241
+closed arcs and **1326 of them score under this threshold** — tiny islands, the smallest
+reaching 0.045 units from its node — and their size says nothing about whether they belong.
+They are never loose ends, since they come out of 2c already closed, so 3a never closes one,
+and a measure of what 3a did has no business reading them. The 460 lakes would all survive the
+measure anyway, the narrowest reaching 1.97 units, but they are left out on the same grounds.
+
 Dropping the stub here, after 3a and before 3b, cannot disconnect anything: its two ends are
 one node already, so everything else meeting there still meets there and only the stub goes.
 What it does do is make the end it was holding a loose end again, which 3b then welds onto real
 geometry.
 
-Measured: countries with no geometry fall from 6 to **3**, the faces two countries claim at
-once from 11 to **7**, the arcs that separate nothing from 41 to **31**. Four fused pairs come
-apart into their proper halves — Athabasca and Sascatchewa, Suhinnan and Manunan, Tuscany and
-Ligury, Duran and Tsuren — and Gwennland recovers the 107,530 square units it lost to Thelemark
-when 2c-ter first went in, so that both now match their expected areas.
+Measured when the rule went in: countries with no geometry fall from 6 to **3**, the faces two
+countries claim at once from 11 to **7**, the arcs that separate nothing from 41 to **31**. Four
+fused pairs come apart into their proper halves — Athabasca and Sascatchewa, Suhinnan and
+Manunan, Tuscany and Ligury, Duran and Tsuren — and Gwennland recovers the 107,530 square units
+it lost to Thelemark when 2c-ter first went in, so that both now match their expected areas.
+
+Measured again when the test was widened to the enclosed radius, where the striking thing is
+how little else moves: **3b splits 2670 arcs instead of 2669**. The other 39 stubs newly
+dropped sit on nodes of degree four, where two real arcs already met and nothing was hidden, so
+they free no end at all and the change is hygiene for all but one of them. Countries with no
+geometry fall from 1 to **0**, the faces two countries claim at once from 4 to **3**, the arcs
+that separate nothing from 26 to **25**, the unaccounted boundary of 7 from 0.431% to
+**0.420%**. Prabang comes back with 48,231 square kilometres and Vantong falls to 94,095 — a
+ratio of 1.95 against the 0.66 to 0.34 share 5b gave the two shapes of the fused face, so the
+traced partition reproduces the shapes' own division of it. The land inside no face does not
+move.
 
 The opposite case has to keep working and is tested: an arc whose two ends are brought together
-but which has real length between them has been *closed into a ring*, not collapsed, and stays.
+but which encloses something wider than the tolerance has been *closed into a ring*, not
+collapsed, and stays. So does a coast ring smaller than the tolerance, which the kind
+restriction above is there to protect.
 
 **3b. Endpoint ↔ segment interior — the dominant case.** For each endpoint still
 unattached, find the nearest arc segment within `SplitTolerance`. Split that segment at the
@@ -668,7 +710,7 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **26 of them on this
+whatever it was drawn to enclose is left open to what lies outside. **25 of them on this
 map**, down from 61 as 2c, 2c-ter, 3a-bis, 3b and 4f took away the causes found so far, and
 the twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
@@ -691,7 +733,9 @@ separate problems:
 Every one of the fused faces has a bridge beside it - Deseret and Arizona on arc 8377,
 Gwennland on 11499, Kovenda on 9496, Bactria and Sogdia on 8565, Vantong on 790, Tuscany on
 948, Kalimantan on 11663, 11625 and 11637 - and arc 9496 sits at 3704.35, 2970.64, which is
-the unresolved end from 3d.
+the unresolved end from 3d. Six of those pairings have since been settled by the rule the
+bridge pointed at, arc 790 and Vantong by 3a-bis measuring a collapsed stub by what it
+encloses.
 
 **This list is the inventory of a symptom, not of a cause, and reading it as a cause was
 wrong.** The entry recorded here before — border arc 11733, 144 points from 4424.6, 2025.1 to
@@ -875,6 +919,12 @@ deterministic and explicable, but the only real repair is the missing tracer, wh
 named in the report. Cutting the face along the two shapes' own boundary would recover both
 countries and would keep exact sharing, since both pieces would come from one cut line; it
 is not done here because it puts geometry into the output that no traced face produced.
+
+Both pairs named above have since been repaired upstream — Bopedi by 3b closing a loop the weld
+would not let close, Prabang by 3a-bis measuring a collapsed stub by what it encloses — so the
+rule now has three fused faces to act on rather than seven, and no country is left with nothing
+by it. The figures in this section and the verification below were measured when the rule went
+in and are left as they were.
 
 **5c. Unclaimed land faces are absorbed** into the neighbour they share the most border
 with. This is the whole of gap filling in this representation.
@@ -1209,7 +1259,7 @@ and the collapse-not-delete semantics (0e).
 2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
    all, so something between the faces and the output is inventing coordinates; the unlooping
    in 6a is the next suspect. Both figures want re-measuring after 1.
-3. **The 47 arcs that separate nothing**, down from 61. Each is a question rather than an
+3. **The 25 arcs that separate nothing**, down from 61. Each is a question rather than an
    answer: two of them turned out to be the coast's fault rather than the border's, and 2c-ter
    and 4f fixed those in the pipeline, so reading the rest as "work on the source map" — as
    this plan did — is an assumption and not a finding. Arc 9496 at 3704.35, 2970.64 is still
@@ -1221,14 +1271,27 @@ and the collapse-not-delete semantics (0e).
 5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
    sharing failure, but RFC 7946 asks for counter-clockwise shells.
-7. **One country still has no geometry**, down from fifteen: Prabang, which is one half of the
-   Vantong and Prabang face that 5b reports. The window dump is how to find out why: take the
-   country, dump every arc, node, departure angle and ring around it, and follow the traversal
-   step by step until it turns the wrong way. That is how Maharath, Mauretania, Ligury, Bopedi
-   and Padun were found, and each of the five gave a different cause - a gap in the coast open
-   to the sea, one line drawn twice, a stub that captured a border's end, a loop the weld would
-   not let close, and a gap fat enough to be taken for a lake. The three other fused faces are
-   Kalimantan and Daha, and the two around Caribbea.
+7. **Done. Every country has geometry**, where fifteen had none. This item read: one country
+   still has no geometry, Prabang, which is one half of the Vantong and Prabang face that 5b
+   reports.
+
+   The window dump found it, as it found the six before it: take the country, dump every arc,
+   node, departure angle and ring around it, and follow the traversal step by step until it
+   turns the wrong way. Seven countries have now been read this way and gave **seven different
+   causes** - a gap in the coast open to the sea, one line drawn twice, one border copying
+   another, a stub that captured a border's end, a loop the weld would not let close, a gap fat
+   enough to be taken for a lake, and a stub that kept a vertex of its own and so escaped the
+   rule written for the stub before it. Not one of the seven was guessable from the report that
+   announced it, which remains the argument for reading the next one rather than reasoning about
+   it.
+
+   **Three fused faces are left, and the two around Caribbea are not the same kind of thing.**
+   Kalimantan and Daha split 0.52 to 0.48, which is the shape of every case fixed so far: one
+   region, two countries, no tracer between them. Martinique and Caribbea, and Caribbea and
+   Iouanorre, are each reported at a **full 1.00 for both** claimants. Two countries each
+   covering the whole of a face is not a division that failed; it is two shapes drawn one on top
+   of the other, and 5b already counts four such pairs. Reading Caribbea should start there and
+   not with the traversal.
 8. **Done, and only half of it was right.** This item read: 22 arcs are shorter than the
    0.0001 unit noding grid and 4e does not reach them, because it asks for every coordinate to
    equal the node exactly rather than to within the grid; 18 of the 22 are closed and the other
