@@ -22,9 +22,15 @@ using Serilog;
 
 public sealed class TopologyService : ITopologyService
 {
-    // How far apart two arcs on the same two nodes may run and still be one line drawn
-    // twice. The 4x gap the figure sits in is measured in RemoveCoastDuplicates below.
-    private const double MaximumDuplicateDistance = 0.1;
+    // What two arcs on the same two nodes may enclose between them and still be one line
+    // drawn twice, as an area over the length of the loop they make. The 4.4x gap the figure
+    // sits in is measured in RemoveDuplicateArcs below, and it is the same hydraulic radius
+    // Phase 2 uses to tell a gap from a lake and a slit from an inlet.
+    private const double MaximumDuplicateAreaToLengthRatio = 0.15;
+
+    // A loop of no perimeter has no shape to measure, and dividing by it would come out as
+    // NaN, which compares false against every threshold.
+    private const double DegenerateLength = 1E-9;
 
     // How many of the arcs that separate nothing to name individually. The longest first,
     // since a long one is a chain that was drawn to enclose something real.
@@ -83,15 +89,15 @@ public sealed class TopologyService : ITopologyService
                 degenerate);
         }
 
-        (int duplicates, double duplicateLength, double apart) = this.RemoveCoastDuplicates(arcGraph);
+        (int duplicates, double duplicateLength, double widest) = RemoveDuplicateArcs(arcGraph);
         if (duplicates > 0)
         {
             Log.Information(
-                "Dropped {Duplicates} border arcs covering {Length:0.##} units that join the same two nodes as "
-                + "a coast arc and run along it, the furthest of them {Apart:0.#####} away from it.",
+                "Dropped {Duplicates} arcs covering {Length:0.##} units that join the same two nodes as another "
+                + "and run along it, the widest of the slivers between them measuring {Widest:0.#####}.",
                 duplicates,
                 duplicateLength,
-                apart);
+                widest);
         }
 
         List<(DirectedArc[] Ring, double SignedArea)> rings = TraceRings(arcGraph);
@@ -306,6 +312,128 @@ public sealed class TopologyService : ITopologyService
         }
 
         return degenerate.Length;
+    }
+
+    // Two arcs that join the same pair of nodes and run along each other the whole way are
+    // one line drawn twice. Both copies leave each of the two nodes they share, the four
+    // half-edges interleave in the order 4b sorts them into, and a traversal arriving along
+    // one of them takes the other as its next turn and reverses: at node 819 in the sample
+    // map the coast left forwards at -22.249 degrees, the border backwards at -18.471, the
+    // coast backwards at 158.174 and the border forwards at 161.918. Whatever the reversed
+    // traversal then walks into goes into the outline of the landmass rather than into a face
+    // of its own, and the countries there get no ground. Siam, Dumarune and Sulka were left
+    // with nothing by a border copying the coast, and Mauretania and Altavia came out as one
+    // face because a border copied another border.
+    //
+    // Told apart by what the two enclose between them, over the length of the loop they make
+    // - the hydraulic radius of Phase 2 again, since one line drawn twice encloses nothing
+    // while two routes enclose a lens. Measured over all 166 pairs of arcs that share both
+    // their nodes on this map: 128 of them come to 0.1243 at the widest, the next is 0.2138,
+    // and nothing lies between. The rest run from there to 12.78 and are alternative routes.
+    // The gap is narrow, 1.7x, but it is the only break anywhere below 0.2, and the same 0.15
+    // the holes and the slits are judged by sits inside it.
+    //
+    // Of those 128, two thirds are one border copying another: 67 border on border, 26 border
+    // on coast, 11 substate on coast, 9 substate on substate, 6 border on substate, 4 coast on
+    // coast, 4 lake on lake and 1 border on lake.
+    //
+    // Length is no part of the test and cannot be. Dumarune's duplicate is 0.21 units long
+    // and Sulka's 0.0002, far below anything that could be told from a border merely touching
+    // what it meets by how long it ran. What makes a pair provable is the two shared nodes,
+    // which is noding having already found that the two lines meet at both ends.
+    //
+    // The coast is kept over a border where the two disagree, because a border cannot divide
+    // land from sea; otherwise the lowest identifier is kept, so that the same graph always
+    // reduces the same way.
+    //
+    // This runs after Phase 2 has filled the slits in the coast, and the order matters: a
+    // border running along the wall of a slit looks just like a copy of the shore, but it is
+    // a real border and the slit is the error. Filled first, no such pair is left to find.
+    private static (int Dropped, double Length, double Widest) RemoveDuplicateArcs(ArcGraph arcGraph)
+    {
+        Dictionary<(int Low, int High), List<Arc>> byPair = new Dictionary<(int Low, int High), List<Arc>>();
+        foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.StartNode != arc.EndNode))
+        {
+            (int Low, int High) key = (Math.Min(arc.StartNode.Id, arc.EndNode.Id),
+                Math.Max(arc.StartNode.Id, arc.EndNode.Id));
+            if (!byPair.TryGetValue(key, out List<Arc>? arcs))
+            {
+                arcs = [];
+                byPair.Add(key, arcs);
+            }
+
+            arcs.Add(arc);
+        }
+
+        List<Arc> duplicates = [];
+        double length = 0.0;
+        double widest = 0.0;
+        foreach (List<Arc> arcs in byPair.Values.Where(arcs => arcs.Count > 1))
+        {
+            List<Arc> kept = [];
+            foreach (Arc arc in arcs.OrderBy(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake ? 0 : 1)
+                         .ThenBy(arc => arc.Id))
+            {
+                double radius = kept.Count == 0
+                    ? double.PositiveInfinity
+                    : kept.Min(other => GetSliverRadius(other, arc));
+                if (radius > MaximumDuplicateAreaToLengthRatio)
+                {
+                    kept.Add(arc);
+                    continue;
+                }
+
+                duplicates.Add(arc);
+                length += GetLength(arc.GetFullCoordinates());
+                widest = Math.Max(widest, radius);
+            }
+        }
+
+        foreach (Arc arc in duplicates)
+        {
+            arcGraph.Arcs.Remove(arc);
+        }
+
+        return (duplicates.Count, length, widest);
+    }
+
+    // The sliver the two arcs enclose, as its area over its perimeter. The loop closes on
+    // itself by construction, both arcs running between the same two nodes, so the shoelace
+    // sum needs no closing term of its own.
+    private static double GetSliverRadius(Arc one, Arc other)
+    {
+        Coordinate[] forwards = one.GetFullCoordinates();
+        Coordinate[] backwards = other.GetFullCoordinates();
+
+        // The second arc has to run back the way the first came, so that the two together
+        // close a loop. Reversing it when the two set out from the same node does that
+        // whichever way round it was stored.
+        if (other.StartNode == one.StartNode)
+        {
+            Array.Reverse(backwards);
+        }
+
+        Coordinate[] loop = [.. forwards, .. backwards];
+        double area = 0.0;
+        double perimeter = 0.0;
+        for (int i = 0; i < (loop.Length - 1); ++i)
+        {
+            area += (loop[i].X * loop[i + 1].Y) - (loop[i + 1].X * loop[i].Y);
+            perimeter += loop[i].Distance(loop[i + 1]);
+        }
+
+        return perimeter < DegenerateLength ? 0.0 : Math.Abs(area / 2.0) / perimeter;
+    }
+
+    private static double GetLength(Coordinate[] coordinates)
+    {
+        double length = 0.0;
+        for (int i = 0; i < (coordinates.Length - 1); ++i)
+        {
+            length += coordinates[i].Distance(coordinates[i + 1]);
+        }
+
+        return length;
     }
 
     private static List<(DirectedArc[] Ring, double SignedArea)> TraceRings(ArcGraph arcGraph)
@@ -604,85 +732,6 @@ public sealed class TopologyService : ITopologyService
         ApplySplits(arcGraph, splits);
 
         return splits.Values.Sum(list => list.Count) / 2;
-    }
-
-    // Two arcs that join the same pair of nodes and run along each other the whole way are
-    // one line drawn twice. Where one is coast and the other a border that is exactly what
-    // it is, because a border cannot divide land from sea: the border is a second copy of
-    // the shore. Both copies then leave each of the two nodes they share, the four
-    // half-edges interleave in the order 4b sorts them into, and a traversal arriving along
-    // the coast finds the border as its next turn and steps off the shoreline onto it. From
-    // there it walks the border network of whatever lies inland into the outline of the
-    // landmass, and the countries there get no face. That is what left Siam, Dumarune and
-    // Sulka with nothing.
-    //
-    // Measured over the sample map before Phase 2 was repairing anything: 84 pairs of nodes
-    // carried both a border and a coast arc, and 48 of those ran within 0.0413 of each other
-    // from end to end, the next three 0.1667, 0.2192 and 0.5595 apart, and the remaining 33
-    // alternative routes two units and more away. Any threshold between 0.0413 and 0.1667
-    // picks out the same 48. With the slits filled first there are 34 of them left to drop,
-    // the furthest 0.0336 away, the rest having gone with the slits they were lying along.
-    //
-    // Length is no part of the test, and cannot be: Dumarune's duplicate is 0.21 units long
-    // and Sulka's 0.0002, far below anything that could be told from a border merely touching
-    // the shore by how long it ran. What makes them provable is the pair of shared nodes,
-    // which is noding having already found that the two lines meet at both ends.
-    //
-    // This runs after Phase 2 has filled the slits in the coast, and the order matters: a
-    // border running along the wall of a slit looks just like this, but it is a real border
-    // and the slit is the error. Filled first, no such pair is left to find.
-    private (int Dropped, double Length, double Apart) RemoveCoastDuplicates(ArcGraph arcGraph)
-    {
-        Dictionary<(int Low, int High), List<Arc>> byPair = new Dictionary<(int Low, int High), List<Arc>>();
-        foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.StartNode != arc.EndNode))
-        {
-            (int Low, int High) key = (Math.Min(arc.StartNode.Id, arc.EndNode.Id),
-                Math.Max(arc.StartNode.Id, arc.EndNode.Id));
-            if (!byPair.TryGetValue(key, out List<Arc>? arcs))
-            {
-                arcs = [];
-                byPair.Add(key, arcs);
-            }
-
-            arcs.Add(arc);
-        }
-
-        List<Arc> duplicates = [];
-        double length = 0.0;
-        double apart = 0.0;
-        foreach (List<Arc> arcs in byPair.Values.Where(arcs => arcs.Count > 1))
-        {
-            LineString[] shores =
-            [
-                .. arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake)
-                    .Select(arc => this.geometryFactory.CreateLineString(arc.GetFullCoordinates())),
-            ];
-            if (shores.Length == 0)
-            {
-                continue;
-            }
-
-            foreach (Arc arc in arcs.Where(arc => arc.Kind is ArcKind.Border or ArcKind.Substate))
-            {
-                LineString border = this.geometryFactory.CreateLineString(arc.GetFullCoordinates());
-                double distance = shores.Min(shore => DiscreteHausdorffDistance.Distance(shore, border));
-                if (distance > MaximumDuplicateDistance)
-                {
-                    continue;
-                }
-
-                duplicates.Add(arc);
-                length += border.Length;
-                apart = Math.Max(apart, distance);
-            }
-        }
-
-        foreach (Arc arc in duplicates)
-        {
-            arcGraph.Arcs.Remove(arc);
-        }
-
-        return (duplicates.Count, length, apart);
     }
 
     // Each outline is the outside of one piece of land, so it belongs to whichever face

@@ -197,7 +197,8 @@ public class TopologyServiceFaceTests
         // A border cannot divide land from sea, so one joining the same two nodes as a coast
         // arc and running along it is a second copy of the shore. Left in, both copies leave
         // each of the two nodes, the four half-edges interleave, and a traversal arriving
-        // along the coast takes the border as its next turn and walks inland.
+        // along the coast takes the border as its next turn and walks inland. The coast is
+        // the one kept, whichever identifier it carries.
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         Node west = arcGraph.AddNode(new Coordinate(0, 0));
         Node east = arcGraph.AddNode(new Coordinate(10, 0));
@@ -212,12 +213,36 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldDropBorder_WhenItIsAnotherBorderDrawnASecondTime(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Welding attaches a loose end to the arc it lands on, and the piece either side of
+        // the junction keeps the drawn vertex next to it, so an end that overshoots leaves a
+        // stub doubling back. Where another arc already ran that way the stub is a copy of
+        // it, and the two copies reverse the traversal between them. That is Mauretania and
+        // Altavia, which came out as one face with the border between them traversed both
+        // ways in the same ring.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, [(5.0, 0.02)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        Arc second = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().NotContain(second).And.Contain(arc => arc.Kind == ArcKind.Border);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldKeepBorder_WhenItTakesItsOwnRouteBetweenTheSameNodes(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
         // Two units from the shore is a route of its own rather than a copy of one, and it
-        // divides the ground either side of it. The threshold is a tenth of a unit, which
-        // RemoveCoastDuplicates measures.
+        // divides the ground either side of it. What tells them apart is the sliver the two
+        // enclose, measured in RemoveDuplicateArcs: this one comes to 0.48 against the 0.005
+        // of the copy above.
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         Node west = arcGraph.AddNode(new Coordinate(0, 0));
         Node east = arcGraph.AddNode(new Coordinate(10, 0));
