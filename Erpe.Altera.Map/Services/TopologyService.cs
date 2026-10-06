@@ -63,28 +63,47 @@ public sealed class TopologyService : ITopologyService
 
         int crossings = this.NodeCrossings(arcGraph);
 
-        // Two nodes at one coordinate are one point, however they got there, and an arc
-        // between such a pair has no length and so no direction to leave the node in. That
-        // matters because 4b chooses where to go next by departure angle, and the angle of
-        // a line of no length is whatever Atan2 makes of two zeroes: GetDepartureAngle
-        // falls back to a coordinate equal to the start when it can find no different one,
-        // so such an arc claims to leave at angle 0 whatever lies around it. One of those in
-        // the order is enough to send the traversal the wrong way, and a boundary walked the
-        // wrong way out of its own region ends up in the outline of the landmass instead of
-        // closing into a face.
+        // Two nodes at one coordinate are one node, however they got there, and an arc between
+        // such a pair has no length and so no direction to leave the node in. That matters
+        // because 4b chooses where to go next by departure angle, and the angle of a line of
+        // no length is whatever Atan2 makes of two zeroes: GetDepartureAngle falls back to a
+        // coordinate equal to the start when it can find no different one, so such an arc
+        // claims to leave at angle 0 whatever lies around it. One of those in the order is
+        // enough to send the traversal the wrong way, and a boundary walked the wrong way out
+        // of its own region ends up in the outline of the landmass instead of closing into a
+        // face.
+        //
+        // The two tests are not the same test, and the asymmetry is deliberate. Dropping an
+        // arc asks whether the noding grid puts all of its coordinates at its node, because
+        // an arc that small has no direction to be traced by whatever its coordinates say.
+        // Merging two nodes asks whether their coordinates are equal exactly.
+        //
+        // Measured, because the obvious thing is wrong: merging nodes the grid puts at the
+        // same point collapses 605 of them rather than 57 and takes the countries with no
+        // geometry from 6 to 18. The arc geometry is not on the grid - only the crossing
+        // points of 4a are ever made precise, and the drawn coordinates come off the SVG as
+        // they are - so two nodes less than a grid step apart are two real points in the
+        // data, and rounding them together joins chains that the map never joined. The grid
+        // is a resolution, not a tolerance. Within one arc it says what is too small to have
+        // a direction; between two nodes it says nothing at all.
+        //
+        // Widening the arc test alone drops 18 more arcs, all of them closed, and moves no
+        // other number on this map: the land inside no face, the arcs separating nothing, the
+        // fused faces and the boundary sharing cannot account for all stay where they were.
+        // Hygiene rather than a repair.
         //
         // This was expected to be what left Maharath, Sanjan, Siam, Dumarune and Sulka with
         // no ground at all, and it is not: removing these recovers Tangeria and takes the
         // land lost to self-crossing rings from 18,816 square units to 5,699, but those five
-        // are still missing. What accounts for them is the 56 border arcs that have both of
-        // their sides in one ring, and so separate nothing at all.
+        // are still missing. What accounted for them was a gap in the coast open to the sea
+        // and, beside it, one line drawn twice.
         int merged = MergeCoincidentNodes(arcGraph);
-        int degenerate = RemoveDegenerateArcs(arcGraph);
+        int degenerate = RemoveDegenerateArcs(arcGraph, this.geometryFactory.PrecisionModel);
         if ((merged > 0) || (degenerate > 0))
         {
             Log.Information(
-                "Merged {Merged} nodes onto another at the same coordinate and dropped {Degenerate} arcs left "
-                + "with no length, which have no direction to be traced by.",
+                "Merged {Merged} nodes onto another at the same coordinate and dropped {Degenerate} closed arcs "
+                + "the noding grid puts entirely at their own node, which have no direction to be traced by.",
                 merged,
                 degenerate);
         }
@@ -251,6 +270,8 @@ public sealed class TopologyService : ITopologyService
     // what it cut.
     private static int MergeCoincidentNodes(ArcGraph arcGraph)
     {
+        // The node of lowest identifier at each coordinate survives, so that the same graph
+        // always collapses the same way.
         Dictionary<(double X, double Y), Node> survivors = new Dictionary<(double X, double Y), Node>();
         Dictionary<Node, Node> replacements = new Dictionary<Node, Node>();
         foreach (Node node in arcGraph.Nodes.OrderBy(node => node.Id))
@@ -294,17 +315,35 @@ public sealed class TopologyService : ITopologyService
         return replacements.Count;
     }
 
-    // An arc every one of whose coordinates is the same point. Removing it cannot
-    // disconnect anything, since after the merge above both its ends are the same node.
-    // A closed arc with real geometry - an island, a lake shore - is left alone.
-    private static int RemoveDegenerateArcs(ArcGraph arcGraph)
+    // Where the noding grid would put a coordinate. What follows from two coming out the same
+    // is for the caller to decide, and is not the same thing in both places above: the drawn
+    // geometry never passes through this model, so agreeing here is not evidence that two
+    // points in the data are one.
+    private static (double X, double Y) GetPoint(PrecisionModel precisionModel, Coordinate coordinate)
+    {
+        Coordinate point = coordinate.Copy();
+        precisionModel.MakePrecise(point);
+        return (point.X, point.Y);
+    }
+
+    // An arc that is all one point, as the noding grid sees it. Only a closed one goes, so
+    // that removing it can never disconnect anything, and that condition is what makes the
+    // grid safe to use here where it is not safe for the nodes: an open arc this small is
+    // left in place rather than its two nodes being brought together. A closed arc with real
+    // geometry - an island, a lake shore - is left alone however small, because it has a
+    // direction to be traced by.
+    //
+    // 72 arcs on this map, 18 of which the exact test this replaces did not reach.
+    private static int RemoveDegenerateArcs(ArcGraph arcGraph, PrecisionModel precisionModel)
     {
         Arc[] degenerate =
         [
             .. arcGraph.Arcs.Where(
-                arc => Array.TrueForAll(
-                    arc.GetFullCoordinates(),
-                    coordinate => coordinate.Equals2D(arc.StartNode.Coordinate))),
+                arc => (arc.StartNode == arc.EndNode)
+                    && Array.TrueForAll(
+                        arc.GetFullCoordinates(),
+                        coordinate => GetPoint(precisionModel, coordinate)
+                            == GetPoint(precisionModel, arc.StartNode.Coordinate))),
         ];
         foreach (Arc arc in degenerate)
         {

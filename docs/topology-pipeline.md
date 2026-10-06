@@ -603,7 +603,7 @@ So an arc separating nothing is worth reporting, and it is still how these defec
 themselves — but each one is a question rather than an answer, and at least some of the
 remaining 47 will have a cause the pipeline can fix too.
 
-**4e. Zero-length arcs are a second, smaller defect of the same family, and were at first
+**4e. Arcs of no length are a second, smaller defect of the same family, and were at first
 mistaken for the one above.** Welding and splitting leave two *distinct* nodes at one identical
 coordinate - 44 coordinates carry more than one node - and the 50 arcs joining such a pair
 have no length and so no direction. `GetDepartureAngle` falls back to a coordinate equal to
@@ -619,6 +619,13 @@ lost one step earlier in a region that never closes.
 What it does do, measured on one build with the merge switched off and on, is take the arcs
 that separate nothing from **84 down to 61**. So it is a real repair to the topology, just
 not the one that was being looked for.
+
+**What counts as no length is the noding grid, and only for the arc.** A closed arc goes when
+the grid puts every one of its coordinates at its own node, which reaches 72 arcs where asking
+for coordinates exactly equal reached 54. The two nodes of an *open* arc that small are left
+alone, and item 8 below has the measurement that says why: the drawn geometry never passes
+through the precision model, so two nodes inside a grid step of each other are two real points
+in the data, and merging them costs twelve countries their ground.
 
 **4f. Drop an arc that is another arc drawn a second time.** Two arcs joining the same pair
 of nodes and running along each other the whole way are one line drawn twice. Both copies
@@ -1116,14 +1123,36 @@ and the collapse-not-delete semantics (0e).
    one country, dump every arc, node, departure angle and ring in a window around it, and
    follow the traversal step by step until it turns the wrong way. Five of the six are also
    one half of a fused pair reported by 5b, which is where to start.
-8. **22 arcs are shorter than the 0.0001 unit noding grid** and 4e does not reach them,
-   because it asks for every coordinate to equal the node exactly rather than to within the
-   grid the graph is noded on. 18 of the 22 are closed, so dropping them cannot disconnect
-   anything, exactly as 4e argues; the other 4 join two nodes less than a grid step apart,
-   which `MergeCoincidentNodes` leaves alone for the same reason - it merges only coordinates
-   that are exactly equal. Both tests want widening to the grid. Found beside Mauretania's
-   border, where one of the 18 sits on the node two duplicate stubs met at; it did no harm
-   there once the stubs went, so this is latent rather than active.
+8. **Done, and only half of it was right.** This item read: 22 arcs are shorter than the
+   0.0001 unit noding grid and 4e does not reach them, because it asks for every coordinate to
+   equal the node exactly rather than to within the grid; 18 of the 22 are closed and the other
+   4 join two nodes less than a grid step apart, which `MergeCoincidentNodes` leaves alone for
+   the same reason, so **both tests want widening to the grid**.
+
+   The arc test was widened and is now in 4e: a closed arc goes when the grid puts all of its
+   coordinates at its own node. 54 arcs dropped becomes 72, and no other number on this map
+   moves - the land inside no face, the arcs separating nothing, the fused faces and the
+   boundary sharing cannot account for all stay exactly where they were. Hygiene, as this item
+   guessed, rather than a repair.
+
+   **Widening the node test is wrong, and that is the finding worth keeping.** Merging nodes
+   the grid puts at the same point collapses 605 of them rather than 57 and takes the countries
+   with no geometry from **6 to 18**, the arcs separating nothing from 41 to 58, the fused faces
+   from 11 to 13. Measured two ways round, once with a tolerance of a grid step and once by
+   rounding both coordinates through the precision model; both give the same 605 and the same
+   18.
+
+   The reason is that **the drawn geometry never passes through the precision model**. Only the
+   crossing points of 4a are ever made precise; the tracer and coast coordinates come off the
+   SVG as they are. So two nodes less than a grid step apart are two real points in the data,
+   and rounding them together joins chains the map never joined. The grid is a resolution, not
+   a tolerance: within one arc it says what is too small to have a direction, between two nodes
+   it says nothing at all. What makes it safe in 4e is the condition that the arc be closed,
+   since dropping a closed arc can never disconnect anything, where bringing an open arc's two
+   nodes together can.
+
+   Which leaves the 4 open sub-grid arcs in place, and they are the right thing to leave: each
+   joins two nodes the map really does distinguish.
 
 ## Order of work (as planned at the start)
 

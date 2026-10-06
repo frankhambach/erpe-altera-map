@@ -191,6 +191,34 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldDropClosedArc_WhenItIsShorterThanTheNodingGrid(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // A closed arc the noding grid puts entirely at its own node is a point, and a point
+        // has no direction for the traversal to leave the node in. Asking for coordinates
+        // exactly equal to the node left 18 of these in the sample map. Only closed ones go:
+        // an open one would have to have its two nodes brought together instead, and merging
+        // nodes the grid rounds together was measured and breaks twelve countries.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Arc speck = AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Border,
+            east,
+            east,
+            [(10.00003, 0.00002)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().NotContain(speck).And.HaveCount(2);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldDropBorder_WhenItIsTheCoastDrawnASecondTime(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
