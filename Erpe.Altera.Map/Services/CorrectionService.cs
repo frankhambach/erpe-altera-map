@@ -411,16 +411,76 @@ public sealed class CorrectionService : ICorrectionService
         return index;
     }
 
+    // How far a segment lies from a node along the arc they share, against the tolerance. False
+    // for an arc that does not end at the node at all, which is the common case and costs
+    // nothing. The cumulative lengths are worked out once per arc and handed back through
+    // the dictionary, which in practice holds the single arc that ends at this node.
+    private static bool IsNearAlongTheArc(
+        Segment segment,
+        Node node,
+        double weldTolerance,
+        Dictionary<Arc, double[]> cumulative)
+    {
+        bool fromStart = segment.Arc.StartNode == node;
+        bool fromEnd = segment.Arc.EndNode == node;
+        if (!fromStart && !fromEnd)
+        {
+            return false;
+        }
+
+        if (!cumulative.TryGetValue(segment.Arc, out double[]? lengths))
+        {
+            lengths = new double[segment.Coordinates.Length];
+            for (int i = 1; i < lengths.Length; ++i)
+            {
+                lengths[i] = lengths[i - 1] + segment.Coordinates[i - 1].Distance(segment.Coordinates[i]);
+            }
+
+            cumulative.Add(segment.Arc, lengths);
+        }
+
+        // The nearer of the segment's two vertices, from whichever end of the arc the node is.
+        // Both, for a closed arc, where the node is each of them.
+        double along = double.PositiveInfinity;
+        if (fromStart)
+        {
+            along = lengths[segment.Index];
+        }
+
+        if (fromEnd)
+        {
+            along = Math.Min(along, lengths[^1] - lengths[segment.Index + 1]);
+        }
+
+        return along <= weldTolerance;
+    }
+
+    // A loose end may weld onto its own arc, but not onto the stretch of it that it has just
+    // come from - and "just come from" is measured along the arc, not across the gap, by the
+    // same tolerance that bounds the weld.
+    //
+    // Excluding the whole arc instead, as this did, means a tracer that loops round and comes
+    // back to where it began can never be closed. The border that surrounds Bopedi is such a
+    // loop: it starts at the coast, goes right round the country and ends 0.18 units from an
+    // earlier part of itself, with nothing else within 12.48. So it was reported as an
+    // unresolved end, the loop never closed, and the border divided nothing - which is why
+    // Kovenda and Bopedi came out as one face. Excluding nothing would be no better: an end
+    // would find the segment beside itself at no distance at all and split its own arc next to
+    // its own end, which is how stubs are made.
+    //
+    // Measured over the 2669 loose ends of the sample map, allowing this changes exactly one of
+    // them, which is that one.
     private static Split? FindSplit(STRtree<Segment> index, Node node, double weldTolerance)
     {
         Envelope envelope = new Envelope(node.Coordinate);
         envelope.ExpandBy(weldTolerance);
+        Dictionary<Arc, double[]> cumulative = new Dictionary<Arc, double[]>();
 
         Split? best = null;
         double bestDistance = weldTolerance;
         foreach (Segment segment in index.Query(envelope))
         {
-            if ((segment.Arc.StartNode == node) || (segment.Arc.EndNode == node))
+            if (IsNearAlongTheArc(segment, node, weldTolerance, cumulative))
             {
                 continue;
             }

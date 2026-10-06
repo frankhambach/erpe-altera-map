@@ -229,6 +229,46 @@ public class CorrectionServiceWeldTests
 
     [AutoCustomizedData]
     [Test]
+    public void Weld_ShouldCloseTheLoop_WhenAnArcComesBackToItsOwnBody(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // One tracer that starts away from everything, goes right round a region and comes back
+        // to within 0.3 of where it set out. Excluding the whole arc from the search, as this
+        // did, leaves the end loose and the loop never closes, so the border divides nothing.
+        // That is how Kovenda and Bopedi came out as one face.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            [(5, -5), (0, 0), (0, 10), (10, 10), (10, 0), (0.3, 0.1)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 0.1, 1.0);
+
+        arcGraph.Arcs.Should().HaveCount(2);
+        arcGraph.Arcs.Should()
+            .ContainSingle(arc => arc.StartNode == arc.EndNode, "the loop is closed")
+            .And.ContainSingle(arc => arc.StartNode != arc.EndNode, "the tail to it is not");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Weld_ShouldLeaveTheEndLoose_WhenOnlyItsOwnNeighbourhoodIsNear(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The other half of the same rule. This end is 0.2 from its own arc, but only 0.6 back
+        // along it, so what it has found is the stretch it has just come from. Welding there
+        // would split the arc beside its own end and leave a stub, which is how stubs are made.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (0.5, 0), (0.5, 0.2), (0.1, 0.2)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 0.1, 1.0);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.StartNode.Should().NotBeSameAs(arc.EndNode);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Weld_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
