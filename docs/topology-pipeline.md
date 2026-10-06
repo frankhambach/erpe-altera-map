@@ -446,6 +446,38 @@ centroid. Union-find rather than pairwise snapping because the old `Snap` sorts 
 transitivity: A→B and B→C can leave A and C apart. 386 of them, and it absorbs the
 short-connector case from 0e.
 
+**3a-bis. Drop the arcs 3a has collapsed, before 3b runs.** An arc shorter than
+`MergeTolerance` has its own two ends welded to each other, and that joins nothing: it
+collapses the arc to a point. **29 of them on this map**, 28 `Border` and 1 `Substate`, their
+lengths running from exactly 0.5 down to 0.007.
+
+Left in place such a stub does real damage, through what else was in the group its two ends
+merged as. A neighbouring border reaching for the same place joins that group too and its end
+comes to rest on the stub's node. That node is now referenced three times — twice by the stub —
+so it is not a loose end, **3b never looks at it**, and the border is never welded to the arc
+it was drawn to meet. Phase 4e then drops the stub for having no direction to be traced by, and
+the border is left hanging off a node with nothing else on it: an arc that divides nothing, so
+the two countries either side of it come out as one face.
+
+That is **Ligury and Tuscany**. The border between them, 10.74 units of it, ends on the node of
+a stub 0.3 units long instead of on the border it was drawn to meet 0.88 units further on. In
+`--debug-svg` the stub shows as a single point apparently unconnected to anything, sitting
+exactly where the border ends.
+
+Dropping the stub here, after 3a and before 3b, cannot disconnect anything: its two ends are
+one node already, so everything else meeting there still meets there and only the stub goes.
+What it does do is make the end it was holding a loose end again, which 3b then welds onto real
+geometry.
+
+Measured: countries with no geometry fall from 6 to **3**, the faces two countries claim at
+once from 11 to **7**, the arcs that separate nothing from 41 to **31**. Four fused pairs come
+apart into their proper halves — Athabasca and Sascatchewa, Suhinnan and Manunan, Tuscany and
+Ligury, Duran and Tsuren — and Gwennland recovers the 107,530 square units it lost to Thelemark
+when 2c-ter first went in, so that both now match their expected areas.
+
+The opposite case has to keep working and is tested: an arc whose two ends are brought together
+but which has real length between them has been *closed into a ring*, not collapsed, and stays.
+
 **3b. Endpoint ↔ segment interior — the dominant case.** For each endpoint still
 unattached, find the nearest arc segment within `SplitTolerance`. Split that segment at the
 foot of the perpendicular, insert a node there, and merge the endpoint into it. 2663 of them
@@ -569,10 +601,14 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **41 of them on this
-map**, down from 61 once 2c-ter and 4f were repairing the two causes found so far, and the
-twenty longest are named with their coordinates so that `--debug-svg` can find them by
-`data-arc-id`.
+whatever it was drawn to enclose is left open to what lies outside. **31 of them on this
+map**, down from 61 as 2c-ter, 3a-bis and 4f took away the causes found so far, and the twenty
+longest are named with their coordinates so that `--debug-svg` can find them by `data-arc-id`.
+
+A dangling node — one with a single arc end on it — makes that arc a bridge by itself, and
+there were 9 before 3a-bis. Counting them is the cheapest way in: each names an arc and a
+coordinate to look at. One of the 9 is the arc end 3d still reports as unresolved, so the
+12.48-unit gap and the Kovenda and Bopedi fused face are one defect, not two.
 
 That list turns out to be the inventory behind three reports that had looked like three
 separate problems:
@@ -1116,13 +1152,14 @@ and the collapse-not-delete semantics (0e).
 5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
    sharing failure, but RFC 7946 asks for counter-clockwise shells.
-7. **Six countries still have no geometry**, down from fifteen: Bopedi, Ligury, Manunan,
-   Padun, Prabang and Sascatchewa. Each is a region that never closed, and the causes found so
-   far - a gap in the coast open to the sea, and one line drawn twice - are repaired, so these
-   six have another cause waiting. The method that found the others is worth repeating: take
-   one country, dump every arc, node, departure angle and ring in a window around it, and
-   follow the traversal step by step until it turns the wrong way. Five of the six are also
-   one half of a fused pair reported by 5b, which is where to start.
+7. **Three countries still have no geometry**, down from fifteen: Bopedi, Padun and Prabang.
+   Each is one half of a fused pair that 5b reports - Kovenda and Bopedi, Kunmin and Padun,
+   Vantong and Prabang - so each is one dangling arc or one wrong turn from closing, and the
+   window dump is how to find out which: take one country, dump every arc, node, departure
+   angle and ring around it, and follow the traversal step by step until it turns the wrong
+   way. That is how Maharath, Mauretania and Ligury were found, and each of the three gave a
+   different cause. The other four fused faces are Deseret and Arizona, Kalimantan and Daha,
+   and the two around Caribbea.
 8. **Done, and only half of it was right.** This item read: 22 arcs are shorter than the
    0.0001 unit noding grid and 4e does not reach them, because it asks for every coordinate to
    equal the node exactly rather than to within the grid; 18 of the 22 are closed and the other
@@ -1140,7 +1177,8 @@ and the collapse-not-delete semantics (0e).
    with no geometry from **6 to 18**, the arcs separating nothing from 41 to 58, the fused faces
    from 11 to 13. Measured two ways round, once with a tolerance of a grid step and once by
    rounding both coordinates through the precision model; both give the same 605 and the same
-   18.
+   18. Those figures were measured before 3a-bis, which has since taken the three baselines
+   from 6, 41 and 11 to 3, 31 and 7.
 
    The reason is that **the drawn geometry never passes through the precision model**. Only the
    crossing points of 4a are ever made precise; the tracer and coast coordinates come off the
