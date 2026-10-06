@@ -480,9 +480,30 @@ but which has real length between them has been *closed into a ring*, not collap
 
 **3b. Endpoint ↔ segment interior — the dominant case.** For each endpoint still
 unattached, find the nearest arc segment within `SplitTolerance`. Split that segment at the
-foot of the perpendicular, insert a node there, and merge the endpoint into it. 2663 of them
+foot of the perpendicular, insert a node there, and merge the endpoint into it. 2669 of them
 in this file. **Do not treat this as the exception path** — it is how most of this map's
 borders meet, by seven to one.
+
+**An endpoint may weld onto its own arc, but not onto the stretch it has just come from**, and
+"just come from" is measured along the arc rather than across the gap, by the same
+`SplitTolerance`. Both halves of that matter:
+
+- Excluding the whole arc, as this did, means **a tracer that loops round and comes back to
+  where it began can never be closed**. The border that surrounds Bopedi is one: it starts at
+  the coast, goes right round the country, and ends 0.18 units from an earlier part of itself
+  with nothing else inside 12.48. So it was reported as an unresolved end, the loop never
+  closed, the border divided nothing, and Kovenda and Bopedi came out as one face. Splitting
+  the arc at the meeting point turns the loop into a closed arc and leaves the run out to the
+  coast as a piece of its own, which is the topology that was drawn.
+- Excluding nothing would be no better: an endpoint would find the segment beside itself at no
+  distance at all and split its own arc next to its own end, which is how the stubs of 3a-bis
+  are made.
+
+Measured over all 2669 endpoints that reach 3b, allowing this changes **exactly one** of them,
+and that one is Bopedi's. Countries with no geometry fall from 3 to **2**, the faces two
+countries claim at once from 7 to **6**, the arcs that separate nothing from 31 to **30**;
+Bopedi comes back with 43,551 against 43,387 expected and Kovenda falls to 54,179 against
+54,005. Nothing else on the map moves.
 
 **3c. River-mouth weld — dropped. Not needed for this input.**
 
@@ -526,9 +547,16 @@ a tolerance capping how wide a neck may be closed.
 **3d. Report, do not guess.** Any endpoint unresolved at `SplitTolerance` goes to a
 warning list with its SVG coordinates and, so the report says how far short it fell
 and what it probably should have met, the kind and distance of the nearest arc beyond
-the tolerance. Expect 1 entry, the end whose nearest arc is 12.48 units away. This list is
-the manual-review queue for each new export, and it must stay short — if it grows,
-something changed upstream. Each entry is worth a country, so none of them is cheap.
+the tolerance. **Expect none.** The one entry this list used to carry, the end whose nearest
+other arc was 12.48 units away, was not a drawing error at all: what it should have met was
+its own arc, 0.18 units off, which 3b was excluding. This list is the manual-review queue for
+each new export, and it must stay short — if it grows, something changed upstream. Each entry
+is worth a country, so none of them is cheap.
+
+It is also worth reading the other way round. An unresolved end says *nothing within the
+tolerance*, and the natural reading is that the map is missing a line. Here the line was there
+and the search would not look at it, so the first question to ask of an entry is what the
+nearest arc of **any** kind is, including the end's own.
 
 **3e. Apply the tolerance to endpoints only, never to interior vertices.** The
 linework interiors are not defective; only the ends are. This keeps every coast and
@@ -601,14 +629,16 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **31 of them on this
-map**, down from 61 as 2c-ter, 3a-bis and 4f took away the causes found so far, and the twenty
-longest are named with their coordinates so that `--debug-svg` can find them by `data-arc-id`.
+whatever it was drawn to enclose is left open to what lies outside. **30 of them on this
+map**, down from 61 as 2c-ter, 3a-bis, 3b and 4f took away the causes found so far, and the
+twenty longest are named with their coordinates so that `--debug-svg` can find them by
+`data-arc-id`.
 
 A dangling node — one with a single arc end on it — makes that arc a bridge by itself, and
 there were 9 before 3a-bis. Counting them is the cheapest way in: each names an arc and a
-coordinate to look at. One of the 9 is the arc end 3d still reports as unresolved, so the
-12.48-unit gap and the Kovenda and Bopedi fused face are one defect, not two.
+coordinate to look at. One of the 9 was the arc end 3d reported as unresolved, so the
+12.48-unit gap and the Kovenda and Bopedi fused face were one defect rather than two, and 3b
+closing the loop settled both.
 
 That list turns out to be the inventory behind three reports that had looked like three
 separate problems:
@@ -1152,14 +1182,15 @@ and the collapse-not-delete semantics (0e).
 5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
    sharing failure, but RFC 7946 asks for counter-clockwise shells.
-7. **Three countries still have no geometry**, down from fifteen: Bopedi, Padun and Prabang.
-   Each is one half of a fused pair that 5b reports - Kovenda and Bopedi, Kunmin and Padun,
-   Vantong and Prabang - so each is one dangling arc or one wrong turn from closing, and the
-   window dump is how to find out which: take one country, dump every arc, node, departure
-   angle and ring around it, and follow the traversal step by step until it turns the wrong
-   way. That is how Maharath, Mauretania and Ligury were found, and each of the three gave a
-   different cause. The other four fused faces are Deseret and Arizona, Kalimantan and Daha,
-   and the two around Caribbea.
+7. **Two countries still have no geometry**, down from fifteen: Padun and Prabang. Each is one
+   half of a fused pair that 5b reports - Kunmin and Padun, Vantong and Prabang - so each is
+   one dangling arc or one wrong turn from closing, and the window dump is how to find out
+   which: take one country, dump every arc, node, departure angle and ring around it, and
+   follow the traversal step by step until it turns the wrong way. That is how Maharath,
+   Mauretania, Ligury and Bopedi were found, and each of the four gave a different cause - a
+   gap in the coast open to the sea, one line drawn twice, a stub that captured a border's end,
+   and a loop the weld would not let close. The other four fused faces are Deseret and Arizona,
+   Kalimantan and Daha, and the two around Caribbea.
 8. **Done, and only half of it was right.** This item read: 22 arcs are shorter than the
    0.0001 unit noding grid and 4e does not reach them, because it asks for every coordinate to
    equal the node exactly rather than to within the grid; 18 of the 22 are closed and the other
