@@ -569,7 +569,7 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **47 of them on this
+whatever it was drawn to enclose is left open to what lies outside. **41 of them on this
 map**, down from 61 once 2c-ter and 4f were repairing the two causes found so far, and the
 twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
@@ -620,30 +620,53 @@ What it does do, measured on one build with the merge switched off and on, is ta
 that separate nothing from **84 down to 61**. So it is a real repair to the topology, just
 not the one that was being looked for.
 
-**4f. Drop a border that is the coast drawn a second time.** Two arcs joining the same pair
-of nodes and running along each other the whole way are one line drawn twice. Where one is
-coast and the other a border, that is exactly what it is: a border cannot divide land from
-sea. Both copies then leave each of the two nodes they share, the four half-edges interleave
-in the order 4b sorts them into, and a traversal arriving along the coast takes the border as
-its next turn and steps off the shoreline onto it — from where it walks the border network of
-whatever lies inland into the outline of the landmass. That is what left **Siam, Dumarune and
-Sulka** with nothing.
+**4f. Drop an arc that is another arc drawn a second time.** Two arcs joining the same pair
+of nodes and running along each other the whole way are one line drawn twice. Both copies
+leave each of the two nodes they share, the four half-edges interleave in the order 4b sorts
+them into, and a traversal arriving along one of them takes the other as its next turn and
+reverses. Whatever it then walks into goes into the outline of the landmass rather than into a
+face of its own. That is what left **Siam, Dumarune and Sulka** with nothing, where a border
+was copying the coast, and what made **Mauretania and Altavia** one face, where a border was
+copying another border.
 
-Measured before 2c-ter was repairing anything: 84 pairs of nodes carried both a border and a
-coast arc, 48 of those ran within 0.0413 of each other end to end, the next three were
-0.1667, 0.2192 and 0.5595 apart, and the remaining 33 were alternative routes two units and
-more away. **Any threshold between 0.0413 and 0.1667 picks out the same 48**, so the 0.1 used
-is a measurement. With the slits filled first, 34 are left to drop — 4.11 units of line, the
-furthest 0.0336 from the shore — the rest having gone with the slits they were lying along.
+**Told apart by what the two enclose between them**, as an area over the length of the loop
+they make: one line drawn twice encloses nothing, two routes enclose a lens. That is the
+hydraulic radius of 2c for the third time. Measured over all 166 pairs of arcs that share both
+their nodes: 128 of them come to 0.1243 at the widest, the next is 0.2138, nothing lies
+between, and the rest run from there to 12.78 and are alternative routes. The gap is narrow,
+1.7×, but it is the only break anywhere below 0.2, and the same 0.15 sits inside it.
+
+Two thirds of the 128 are one border copying another: 67 border on border, 26 border on coast,
+11 substate on coast, 9 substate on substate, 6 border on substate, 4 coast on coast, 4 lake
+on lake, 1 border on lake. 125 arcs go, 25.84 units of line. The coast is kept over a border
+where the two disagree, since a border cannot divide land from sea; otherwise the lowest
+identifier is kept, so the same graph always reduces the same way.
 
 **Length is no part of this test and cannot be.** Dumarune's duplicate is 0.21 units long and
-Sulka's 0.0002, far below anything that could be told apart from a border merely touching the
-shore by how long it ran. What makes them provable is the pair of shared nodes: noding has
-already found that the two lines meet at both ends. A geometric trim was tried first, cutting
-any stretch of border that stays within 0.02 of the shore for at least half a unit — it finds
-10 stretches and recovers Siam, but it cannot see Dumarune's 0.21 or Sulka's 0.0002, and run
-*before* 2c-ter it cuts away the one border dividing Maharath from Sanjan and the two come
-out as a single face.
+Sulka's 0.0002, far below anything that could be told apart from a border merely touching what
+it meets by how long it ran. What makes a pair provable is the two shared nodes: noding has
+already found that the two lines meet at both ends.
+
+Two earlier attempts are worth recording. A geometric trim, cutting any stretch of border that
+stays within 0.02 of the shore for at least half a unit, finds 10 stretches and recovers Siam,
+but it cannot see Dumarune's 0.21 or Sulka's 0.0002, and run *before* 2c-ter it cuts away the
+one border dividing Maharath from Sanjan and the two come out as a single face. A Hausdorff
+distance between the two arcs, at 0.1, works for the border-on-coast pairs but had to be
+measured on those alone; the sliver test replaces it and covers every kind.
+
+**The cause upstream is in the weld, and is not repaired.** Welding attaches a loose end to
+the arc it lands on by cutting that arc at the junction, and `AddPiece` keeps the drawn vertex
+next to the cut. Where the end overshoots, that vertex is left *beyond* its own node and the
+piece doubles back: Mauretania's border overshoots node 819 by 0.18 units, which is 0.18 units
+of line lying on top of the border that already ran there, and 4a then notes the collinear
+crossing, splits both and leaves two identical stubs. Arc 9021's last segment heads at 180°
+where the one before it heads at 63°, which is how the defect shows in `--debug-svg`.
+
+Trimming that overshoot at the weld was measured and dropped: of 5,306 vertices next to a
+split, 265 double back, and their distances to the node run continuously from 0 to 35.8 units
+with no break — most are ordinary sharp corners that have to stay. Where the junction's foot
+lands on the segment is no sharper: Mauretania's sits 0.092 along a 2-unit segment. So the
+overshoot is left alone and the copy it creates is removed instead.
 
 A separate hazard found looking for this one: **109 nodes have two half-edges leaving at
 genuinely equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore
@@ -1086,13 +1109,21 @@ and the collapse-not-delete semantics (0e).
 5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
    sharing failure, but RFC 7946 asks for counter-clockwise shells.
-7. **Eight countries still have no geometry**, down from fifteen: Bopedi, Ligury, Manunan,
-   Mauretania, Padun, Prabang, Sascatchewa and Winnebagee. Each is a region that never closed,
-   and the two causes found so far - a gap in the coast open to the sea, and the coast drawn a
-   second time as a border - are both now repaired, so these eight have a third cause waiting
-   to be found. The method that found the first two is in this plan's history: take one
-   country, dump every arc, node, departure angle and ring in a window around it, and follow
-   the traversal step by step until it turns the wrong way.
+7. **Six countries still have no geometry**, down from fifteen: Bopedi, Ligury, Manunan,
+   Padun, Prabang and Sascatchewa. Each is a region that never closed, and the causes found so
+   far - a gap in the coast open to the sea, and one line drawn twice - are repaired, so these
+   six have another cause waiting. The method that found the others is worth repeating: take
+   one country, dump every arc, node, departure angle and ring in a window around it, and
+   follow the traversal step by step until it turns the wrong way. Five of the six are also
+   one half of a fused pair reported by 5b, which is where to start.
+8. **22 arcs are shorter than the 0.0001 unit noding grid** and 4e does not reach them,
+   because it asks for every coordinate to equal the node exactly rather than to within the
+   grid the graph is noded on. 18 of the 22 are closed, so dropping them cannot disconnect
+   anything, exactly as 4e argues; the other 4 join two nodes less than a grid step apart,
+   which `MergeCoincidentNodes` leaves alone for the same reason - it merges only coordinates
+   that are exactly equal. Both tests want widening to the grid. Found beside Mauretania's
+   border, where one of the 18 sits on the node two duplicate stubs met at; it did no harm
+   there once the stubs went, so this is latent rather than active.
 
 ## Order of work (as planned at the start)
 
