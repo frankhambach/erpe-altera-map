@@ -527,16 +527,38 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
   crosses itself understates the ground it covers and four of those exist. The figure to
   watch once the closing failure is fixed is whatever those four leave behind.
 
-**The cause is arcs that separate nothing.** 56 `Border` arcs - with 27 `Coast`, 5
-`Substate` and 2 `Lake` - have both of their sides in the same ring, so they divide no two
-regions from one another. A region bounded by one of them is not enclosed, no ring closes
-around it, and it never becomes a face. Border arc 11733, 144 points from 4424.6, 2025.1 to
-4412.9, 2057.2, is one of them and lies on Maharath's own boundary; the 314-arc continental
-outline runs through the window and traverses it, which is how Maharath's ground comes to sit
-on the sea side of the partition.
+**4d. Report the arcs that separate nothing.** An arc with both of its sides in one ring
+divides no two regions from each other: the ring walks out along it and straight back, so it
+lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
+sides, but a border that separates nothing means the chain it belongs to never closes, and
+whatever it was drawn to enclose is left open to what lies outside. **61 of them on this
+map**, 56 `Border` and 5 `Substate`, and the twenty longest are named with their coordinates
+so that `--debug-svg` can find them by `data-arc-id`.
 
-**Zero-length arcs are a second, smaller defect of the same family, and were at first
-mistaken for this one.** Welding and splitting leave two *distinct* nodes at one identical
+That list turns out to be the inventory behind three reports that had looked like three
+separate problems:
+
+| symptom | what the chain did | where it shows |
+| --- | --- | --- |
+| two countries share a face | failed partway, so the region is not divided | 5b, 14 fused faces |
+| a country gets no ground at all | failed completely, so the region never closes | 4's area check, 0.670% |
+| an arc end resolves to nothing | fell short of what it should meet | 3d, 1 end at 12.48 units |
+
+Every one of the 14 fused faces has a bridge beside it - Deseret and Arizona on arc 8377,
+Gwennland on 11499, Kovenda on 9496, Bactria and Sogdia on 8565, Vantong on 790, Tuscany on
+948, Kalimantan on 11663, 11625 and 11637 - and arc 9496 sits at 3704.35, 2970.64, which is
+the unresolved end from 3d. Border arc 11733, 144 points from 4424.6, 2025.1 to 4412.9,
+2057.2, is Maharath's own boundary. So the shortfall, the fused faces and the unresolved end
+should converge as the drawn borders are closed, and all three are reported rather than
+repaired, because the repair is a line in the source map.
+
+**That makes the arcs separating nothing the cause of the land inside no face.** A region
+bounded by one of them is not enclosed, no ring closes around it, and it never becomes a
+face; the 314-arc continental outline runs through Maharath's window and traverses 11733,
+which is how Maharath's ground comes to sit on the sea side of the partition.
+
+**4e. Zero-length arcs are a second, smaller defect of the same family, and were at first
+mistaken for the one above.** Welding and splitting leave two *distinct* nodes at one identical
 coordinate - 44 coordinates carry more than one node - and the 50 arcs joining such a pair
 have no length and so no direction. `GetDepartureAngle` falls back to a coordinate equal to
 the start when it can find no different one, so `Atan2(0, 0)` makes such an arc claim to
@@ -547,6 +569,10 @@ square units to 5,699 - and leaves all five missing countries missing, which is 
 ruled out as the cause here. It also moves the area shortfall from 0.382% to 0.670%, because
 the ground Avanarsuaq used to lose at assembly, in a face dropped for crossing itself, is now
 lost one step earlier in a region that never closes.
+
+What it does do, measured on one build with the merge switched off and on, is take the arcs
+that separate nothing from **84 down to 61**. So it is a real repair to the topology, just
+not the one that was being looked for.
 
 A separate hazard found looking for this one: **109 nodes have two half-edges leaving at
 genuinely equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore
@@ -754,17 +780,19 @@ simplified national layer.
 
 Still to do:
 
-- **4 faces covering 27,878 square units still trace to a ring that crosses itself** and are
-  left out, owned by Avanarsuaq, Kalimantan, Thelemark and Epsumba. Unlooping does not reach
-  these, so they are not simple self-touches. **The cause is not duplicated tracers**: the
-  census of Phase 1b was run again inside the window of each of these four faces and found
-  no overlap run of even 2 units, so the guess recorded here before — collinear overlap
-  along the sea coast — is wrong and the cause is still unknown. The one of the five that
-  *was* a duplicate, Anzigo's, is recovered. Epsumba's face is fifteen points at a single
-  coordinate and Thelemark's unloops into eleven lobes, which suggests more than one defect
-  among the four. They are written out on their own by `--debug-svg`, below.
+- **4 faces covering 5,699 square units still trace to a ring that crosses itself** and are
+  left out, owned by Avanarsuaq, Kalimantan, Thelemark and Epsumba. Down from 27,878 since
+  4e, which left the count at four but took most of the area. Unlooping does not reach them,
+  so they are not simple self-touches. **The cause is not duplicated tracers**: the census of
+  Phase 1b was run again inside the window of each and found no overlap run of even 2 units,
+  so the guess recorded here before — collinear overlap along the sea coast — was wrong.
+  Kalimantan has three arcs that separate nothing beside it and Avanarsuaq one, so 4d is the
+  first place to look. Epsumba's face is fifteen points at a single coordinate and
+  Thelemark's unloops into eleven lobes, which suggests more than one defect among the four.
+  They are written out on their own by `--debug-svg`, below.
 - **6d is done: see below.**
-- **6e, TopoJSON.** The sharing it needs is now verified: see Phase 7 item 4.
+- **6e, TopoJSON.** The sharing it needs is measured in Phase 7 item 4, with a residue
+  attached: it holds for 260,643 segments of boundary and not for about 11,785.
 
 ## Intermediate output for inspection — `--debug-svg`
 
@@ -957,7 +985,29 @@ and the collapse-not-delete semantics (0e).
   one-off and should be tens of seconds, but measure before optimising — and keep
   the `STRtree`s, they are what make Phase 3 linear rather than quadratic.
 
-## Order of work
+## What is left, in the order worth doing it
+
+1. **Dissolve a country by walking its arcs** rather than by unioning its faces. Phase 7
+   item 4 measures the union as following the edges it is given for 260,643 segments of
+   boundary and not for about 11,785, and skipping the union outright takes that residue from
+   11,556 to 4,614 - so this removes about 60% of it by construction rather than by
+   measurement. It is also the alternative this plan named at the outset.
+2. **The remaining 4,614.** Of those, 3,535 segments exist in no arc at all, so something
+   between the faces and the output is inventing coordinates; the unlooping in 6a is the next
+   suspect.
+3. **The 61 arcs that separate nothing**, which is work on the source map rather than on the
+   pipeline, and which should close the area shortfall, most of the 14 fused faces and the
+   last unresolved arc end together. Arc 9496 at 3704.35, 2970.64 is the one with a cause
+   already known.
+4. **The 109 nodes where two half-edges leave at genuinely equal angles**, where the order
+   falls to `ThenBy(arc.Id)` and is arbitrary. One of them, node 633 at 2440.35, 857.64, lies
+   inside Avanarsuaq's dropped face. Breaking those ties needs the arcs compared further
+   along than their first vertex.
+5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
+6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
+   sharing failure, but RFC 7946 asks for counter-clockwise shells.
+
+## Order of work (as planned at the start)
 
 0d and 0e first — they are standalone bug fixes, independently verifiable, and
 everything downstream depends on the tracer layer being read completely. Then
