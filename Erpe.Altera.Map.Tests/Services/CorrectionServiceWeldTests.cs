@@ -212,6 +212,55 @@ public class CorrectionServiceWeldTests
 
     [AutoCustomizedData]
     [Test]
+    public void Weld_ShouldDropTheStubAndSplitForItsNeighbour_WhenACollapsedStubKeepsAVertexOfItsOwn(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The same defect as above, except that the stub has a vertex between its two ends. The
+        // merge brings the ends together onto a node the middle vertex is not at, so the stub is
+        // collapsed in every sense that matters - it runs out 0.07 units and straight back - and
+        // yet no coordinate of it equals its node. A test asking for that misses it, the border
+        // stays hanging off a node referenced three times, and Prabang and Vantong come out as
+        // one face.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (20, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, 0.9), (10.05, 0.97), (10.1, 0.9)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, 0.9), (10, 10)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 0.5, 3.0);
+
+        // The stub is gone, and the long arc has been split in two to take the border's end.
+        arcGraph.Arcs.Should().HaveCount(3);
+        arcGraph.Arcs.Should().NotContain(arc => arc.StartNode == arc.EndNode);
+        Arc border = arcGraph.Arcs.Single(arc => arc.EndNode.Coordinate.Equals2D(new Coordinate(10, 10)));
+        arcGraph.Arcs.Where(arc => arc != border)
+            .Should()
+            .Contain(arc => arc.StartNode == border.StartNode)
+            .And.Contain(arc => arc.EndNode == border.StartNode);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Weld_ShouldKeepTheRing_WhenACoastRingIsSmallerThanTheTolerance(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The limit of the rule above: it reads tracers and nothing else. An island's coast comes
+        // out of the union already closed, so the merge never touched it, and on this map 1326 of
+        // them enclose less than the tolerance would allow a tracer to - the smallest reaching
+        // 0.045 units from its node. Their size says nothing about whether they belong.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        arcGraph.AddArc(
+            ArcKind.Coast,
+            coordinateSequenceFactory.Create(
+                [new Coordinate(0, 0), new Coordinate(0.2, 0), new Coordinate(0.2, 0.2), new Coordinate(0, 0)]));
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 0.5, 3.0);
+
+        Arc island = arcGraph.Arcs.Should().ContainSingle().Subject;
+        island.StartNode.Should().BeSameAs(island.EndNode);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Weld_ShouldStillCloseARing_WhenAnArcLongEnoughHasItsOwnEndsMerged(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

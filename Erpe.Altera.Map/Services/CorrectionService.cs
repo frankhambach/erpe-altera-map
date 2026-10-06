@@ -39,6 +39,8 @@ public sealed class CorrectionService : ICorrectionService
     // only: nothing is ever welded at this distance.
     private const double ReportingRadius = 50.0;
 
+    private const double DegenerateLength = 1E-9;
+
     private readonly GeometryFactory geometryFactory;
 
     public CorrectionService(GeometryFactory geometryFactory)
@@ -163,7 +165,7 @@ public sealed class CorrectionService : ICorrectionService
         // Before the index and before the splitting, which is the whole point of doing it
         // here: an end that one of these arcs was holding becomes a loose end again, and the
         // splitting below then welds it onto something real.
-        int collapsedCount = RemoveCollapsedArcs(arcGraph);
+        int collapsedCount = RemoveCollapsedArcs(arcGraph, mergeTolerance);
 
         // Built after merging, because merging moves nodes and so moves the arc ends with
         // them. Querying an index built before that would search stale positions.
@@ -192,8 +194,9 @@ public sealed class CorrectionService : ICorrectionService
 
         Log.Information(
             "Welded {MergedCount} ends onto each other within {MergeTolerance} units, dropped {CollapsedCount} "
-            + "arcs the merge left with no length, and split {SplitCount} arcs within {SplitTolerance} to take "
-            + "the rest, {CoastCount} of those on the coast. {UnresolvedCount} ends remain loose.",
+            + "tracers the merge closed onto nothing wider than itself, and split {SplitCount} arcs within "
+            + "{SplitTolerance} to take the rest, {CoastCount} of those on the coast. {UnresolvedCount} ends "
+            + "remain loose.",
             mergedCount,
             mergeTolerance,
             collapsedCount,
@@ -253,32 +256,59 @@ public sealed class CorrectionService : ICorrectionService
         }
     }
 
-    // An arc shorter than the merge tolerance has its own two ends welded to each other, and
-    // that has joined nothing: it has collapsed the arc to a point. 29 of them on this map,
-    // 28 border and 1 substate, their lengths running from exactly 0.5 down to 0.007.
+    // A tracer whose own two ends the merge welded to each other has joined nothing: it has
+    // collapsed to a point. 68 of them on this map, 65 border and 3 substate.
     //
     // Left in, such an arc does real harm, because of what else was in the group its two ends
     // merged as. A neighbouring border reaching for the same place joins that group too, and
     // its end comes to rest on the collapsed arc's node. The node is then referenced three
     // times, twice by the collapsed arc and once by the border, so it is no longer a loose end
-    // and the splitting below never looks at it. Phase 4 then drops the collapsed arc as
-    // having no direction to be traced by, and the border is left hanging off a node with
+    // and the splitting below never looks at it. The border is left hanging off a node with
     // nothing else on it: an arc that divides nothing, so the two countries either side of it
     // come out as one face. That is Ligury and Tuscany, where the border between them, 10.74
     // units of it, ends on the node of a stub 0.3 units long rather than on the border it was
-    // drawn to meet 0.88 units further on.
+    // drawn to meet 0.88 units further on, and it is Prabang and Vantong, where 44.13 units of
+    // border end on the tip of a 0.12-unit scratch rather than on the border 0.06 units on.
+    //
+    // Collapsed is measured by what the arc encloses, not by where its vertices are. The test
+    // used to ask whether every coordinate was exactly its node's, which caught the stubs the
+    // merge had reduced to a single point and missed the ones that still had a vertex of their
+    // own: arc 789 is 0.12 units of scratch beside Prabang, and after its ends merged it ran
+    // out 0.034 units and straight back, which is a point for every purpose that matters and
+    // no coordinate of which equals the node.
+    //
+    // So the measure is the hydraulic radius of the loop the closed arc makes, area over
+    // perimeter, which for a long thin region is half its width. A spike doubling back
+    // encloses nothing and scores 0; a ring encloses something and scores on the order of its
+    // own size. The threshold is half the merge tolerance, which says the enclosed region is
+    // narrower than the distance the merge is allowed to close - so the merge could have made
+    // it, and there is nothing in it to keep.
+    //
+    // Measured, the two populations do not touch: of the 70 closed tracer arcs, 68 run from 0
+    // up to 0.0578 and the other two are 1.1139 and 3.2849, a span of 19x with nothing in it.
+    // Those two are rings, 25.6 and 82.7 units round, drawn as loops whose ends the merge
+    // closed, and they stay. The threshold is derived rather than fitted, and it lands within
+    // 2% of the middle of that span on a log scale, 4.3x above the widest spike and 4.5x
+    // below the narrowest ring.
+    //
+    // Only tracers, and that restriction is doing the work rather than tidying up after it.
+    // The coast carries 5241 closed arcs and 1326 of them score under this threshold - tiny
+    // islands, the smallest 0.045 units from its node - and their size says nothing about
+    // whether they belong. They are never loose ends, since they come out of the union
+    // already closed, so the merge never closes one, and a measure of what the merge did has
+    // no business reading them. The 460 lakes would all survive the measure anyway, the
+    // narrowest of them 1.97 units out, but they are left out on the same grounds.
     //
     // Removing the arc cannot disconnect anything. Its two ends are one node already, so
     // everything else that meets there still meets there; only the stub itself goes.
-    private static int RemoveCollapsedArcs(ArcGraph arcGraph)
+    private static int RemoveCollapsedArcs(ArcGraph arcGraph, double weldTolerance)
     {
         Arc[] collapsed =
         [
             .. arcGraph.Arcs.Where(
                 arc => (arc.StartNode == arc.EndNode)
-                    && Array.TrueForAll(
-                        arc.GetFullCoordinates(),
-                        coordinate => coordinate.Equals2D(arc.StartNode.Coordinate))),
+                    && (arc.Kind is ArcKind.Border or ArcKind.Substate)
+                    && (GetEnclosedRadius(arc) <= (weldTolerance / 2.0))),
         ];
         foreach (Arc arc in collapsed)
         {
@@ -286,6 +316,23 @@ public sealed class CorrectionService : ICorrectionService
         }
 
         return collapsed.Length;
+    }
+
+    // Area over perimeter for the loop a closed arc makes. The shoelace sum is closed by the
+    // arc's own geometry, which starts and ends at the same node, so no closing term is
+    // needed here.
+    private static double GetEnclosedRadius(Arc arc)
+    {
+        Coordinate[] coordinates = arc.GetFullCoordinates();
+        double area = 0.0;
+        double perimeter = 0.0;
+        for (int i = 0; i < (coordinates.Length - 1); ++i)
+        {
+            area += (coordinates[i].X * coordinates[i + 1].Y) - (coordinates[i + 1].X * coordinates[i].Y);
+            perimeter += coordinates[i].Distance(coordinates[i + 1]);
+        }
+
+        return perimeter < DegenerateLength ? 0.0 : Math.Abs(area / 2.0) / perimeter;
     }
 
     // An end is loose when exactly one arc end references it. A node referenced twice is
