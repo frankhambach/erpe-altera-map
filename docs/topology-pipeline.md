@@ -303,6 +303,45 @@ internal borders are discarded — those come from the tracers.
   the separation is what the threshold rests on. If that warning ever fires, the
   ratio has stopped being a clean discriminator and needs rethinking, not nudging.
 
+  **The valley's upper bound was itself a gap.** The 0.1965 quoted above as where the lakes
+  begin is one single hole, 2.49 square units between Padun's shape and Kunmin's, and it is a
+  gap. With it and one more removed the lakes begin at 0.2551 instead. The ratio was not
+  wrong about the population; it was wrong about this member of it, and no threshold fixes
+  that, because the gap is genuinely as fat as a small lake.
+
+  **So a hole is also a gap when a border runs through it rather than merely into it**, judged
+  by the length of tracer inside it over its hydraulic radius. That measure is deliberately
+  elongation-aware: a border following the length of a sliver scores far higher than one
+  crossing a pool. Measured over the 462 holes the ratio keeps, two come to 18.88 and 8.19 and
+  the rest top out at 1.88 — a span of 4.4× with nothing in it. The two are the Padun and
+  Kunmin gap, with 3.71 units of border along its 2.49 square units, and a second of 0.98
+  square units with 1.92 along it, which turns out to be the gap between Deseret and Ute.
+
+  The threshold sits at 6 rather than in the middle of that span, because a compact lake
+  crossed straight through would score about 4 and has to survive. Nothing on this map is
+  near it — the highest genuine lake is 1.88 — but that is the measure's weak point and not
+  something the data here can rule out.
+
+  Either test is enough on its own, and each catches what the other cannot: the ratio catches
+  the 868 gaps with no tracer anywhere near them, the crossing catches a gap wide enough to
+  look like water.
+
+  **Three other criteria were measured and rejected:**
+
+  | idea | why not |
+  | --- | --- |
+  | raise the ratio threshold | the two gaps sit at 0.1965 and 0.2347 and the lowest real lake at 0.2551, so catching them needs 0.235 — a tuned figure 1.09× under the first lake, not a mid-valley one |
+  | a border passes through the hole, by length | real lakes carry up to 3.13 units of tracer against the gap's 3.71. No separation at all, which is the objection to the idea in the first place |
+  | two or more country shapes bound the hole | 167 of the 462 lakes are bounded by two shapes or more, since a lake on a border is bounded by both |
+
+  Measured end to end: 2 holes reclassified, lakes 462 → 460, lake area down by exactly their
+  3.47 square units. 2c-bis now trims 374 tracers instead of 376 and removes 30.22 units of
+  line instead of 39.23, the 9 units being the border that used to be cut away against these
+  two "lakes". Countries with no geometry fall from 2 to **1**, the faces two countries claim
+  at once from 6 to **4**, the arcs that separate nothing from 30 to **26**. Padun comes back
+  with 98,903 against 98,444 expected, Kunmin falls to 136,654 against 136,268, Ute comes back
+  with 76,949 against 77,241 and Deseret falls to 208,984 against 209,017.
+
 **2c-bis. Cut tracers back to the lake shore.** Borders are drawn over lakes rather than
 stopping at them: 136 tracers in the sample map reach inside one. None crosses — the
 deepest goes 0.783 units in and 113 of the 136 stay within 0.05 — but left alone they
@@ -365,8 +404,8 @@ endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the node
 do the splitting. Each ring is therefore added as one closed arc for now.
 
 **Verified** against `Altera_Data_Generating_Map(13).svg`: 5241 coast shells, 462
-lakes kept, 2632 holes discarded as gaps and 505 filled as slits, giving 7140 arcs in total
-with the tracers.
+lakes kept, 2634 holes discarded as gaps - two of them for the border running through them -
+and 505 filled as slits, giving 7138 arcs in total with the tracers.
 The discarded holes total 25.7 units² — mean 0.0097, largest 2.09 — against 85,696
 units² of kept lakes, largest 20,032. At 0.03% of all hole area the discards are
 digitizing slivers, not water.
@@ -629,9 +668,9 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **30 of them on this
-map**, down from 61 as 2c-ter, 3a-bis, 3b and 4f took away the causes found so far, and the
-twenty longest are named with their coordinates so that `--debug-svg` can find them by
+whatever it was drawn to enclose is left open to what lies outside. **26 of them on this
+map**, down from 61 as 2c, 2c-ter, 3a-bis, 3b and 4f took away the causes found so far, and
+the twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
 
 A dangling node — one with a single arc end on it — makes that arc a bridge by itself, and
@@ -1182,14 +1221,13 @@ and the collapse-not-delete semantics (0e).
 5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
    sharing failure, but RFC 7946 asks for counter-clockwise shells.
-7. **Two countries still have no geometry**, down from fifteen: Padun and Prabang. Each is one
-   half of a fused pair that 5b reports - Kunmin and Padun, Vantong and Prabang - so each is
-   one dangling arc or one wrong turn from closing, and the window dump is how to find out
-   which: take one country, dump every arc, node, departure angle and ring around it, and
-   follow the traversal step by step until it turns the wrong way. That is how Maharath,
-   Mauretania, Ligury and Bopedi were found, and each of the four gave a different cause - a
-   gap in the coast open to the sea, one line drawn twice, a stub that captured a border's end,
-   and a loop the weld would not let close. The other four fused faces are Deseret and Arizona,
+7. **One country still has no geometry**, down from fifteen: Prabang, which is one half of the
+   Vantong and Prabang face that 5b reports. The window dump is how to find out why: take the
+   country, dump every arc, node, departure angle and ring around it, and follow the traversal
+   step by step until it turns the wrong way. That is how Maharath, Mauretania, Ligury, Bopedi
+   and Padun were found, and each of the five gave a different cause - a gap in the coast open
+   to the sea, one line drawn twice, a stub that captured a border's end, a loop the weld would
+   not let close, and a gap fat enough to be taken for a lake. The three other fused faces are
    Kalimantan and Daha, and the two around Caribbea.
 8. **Done, and only half of it was right.** This item read: 22 arcs are shorter than the
    0.0001 unit noding grid and 4e does not reach them, because it asks for every coordinate to
