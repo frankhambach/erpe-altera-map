@@ -21,6 +21,10 @@ using Serilog;
 
 public sealed class TopologyService : ITopologyService
 {
+    // How many of the arcs that separate nothing to name individually. The longest first,
+    // since a long one is a chain that was drawn to enclose something real.
+    private const int MaximumBridgesReported = 20;
+
     // How far the faces may fall short of the coastline before a face has failed to close.
     // It is not zero because the signed area of a shell that crosses itself understates the
     // ground it covers, and four of them do.
@@ -83,6 +87,8 @@ public sealed class TopologyService : ITopologyService
                 traced,
                 arcGraph.Arcs.Count * 2);
         }
+
+        ReportBridges(rings);
 
         (DirectedArc[] Ring, double SignedArea)[] shells = rings.Where(ring => ring.SignedArea > 0.0).ToArray();
         (DirectedArc[] Ring, double SignedArea)[] outlines = rings.Where(ring => ring.SignedArea <= 0.0).ToArray();
@@ -163,6 +169,59 @@ public sealed class TopologyService : ITopologyService
     // from the way back, which keeps the enclosed area on the left throughout. Bounded
     // faces therefore come out anticlockwise with a positive area, and the outer boundary
     // of each separate piece of land comes out the other way round with a negative one.
+    // An arc with both of its sides in one ring divides no two regions from one another: the
+    // ring walks out along it and straight back, so it lies on no cycle at all. For the
+    // coast that is ordinary - an inlet one arc wide has sea on both sides - but a border
+    // that separates nothing means the chain it belongs to never closes, and whatever that
+    // chain was drawn to enclose is left open to whatever lies outside it. The region then
+    // gets no face, and no country can be given ground that is inside no face.
+    //
+    // Reported rather than repaired, because the repair is a line in the source map: either
+    // a border is missing where the chain should have closed, or the chain is drawn out into
+    // the open and should not be there at all.
+    private static void ReportBridges(List<(DirectedArc[] Ring, double SignedArea)> rings)
+    {
+        Dictionary<Arc, int> ringsPerArc = new Dictionary<Arc, int>();
+        foreach ((DirectedArc[] Ring, double SignedArea) ring in rings)
+        {
+            foreach (Arc arc in ring.Ring.Select(directed => directed.Arc).Distinct())
+            {
+                ringsPerArc[arc] = ringsPerArc.GetValueOrDefault(arc) + 1;
+            }
+        }
+
+        Arc[] bridges =
+        [
+            .. ringsPerArc.Where(pair => (pair.Value == 1) && (pair.Key.Kind is ArcKind.Border or ArcKind.Substate))
+                .Select(pair => pair.Key)
+                .OrderByDescending(arc => arc.GetFullCoordinates().Length),
+        ];
+        if (bridges.Length == 0)
+        {
+            return;
+        }
+
+        Log.Warning(
+            "{Count} border and substate arcs have both of their sides in one ring and so separate nothing. "
+            + "Each is a chain that never closes, and the ground it was drawn to enclose gets no face.",
+            bridges.Length);
+
+        foreach (Arc arc in bridges.Take(MaximumBridgesReported))
+        {
+            Coordinate[] line = arc.GetFullCoordinates();
+            Log.Warning(
+                "Arc {ArcId}, {Kind}, {Points} points from {X0:0.##}, {Y0:0.##} to {X1:0.##}, {Y1:0.##} "
+                + "separates nothing.",
+                arc.Id,
+                arc.Kind,
+                line.Length,
+                line[0].X,
+                line[0].Y,
+                line[^1].X,
+                line[^1].Y);
+        }
+    }
+
     // Nodes sharing a coordinate collapse onto the one with the lowest identifier, so that
     // the same graph always collapses the same way. They arise from both ends of the
     // pipeline: noding a crossing adds a node at the rounded intersection, which may land on
