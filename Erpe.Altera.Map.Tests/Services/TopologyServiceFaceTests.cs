@@ -123,6 +123,54 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldMergeTheNodes_WhenTwoOfThemShareACoordinate(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Each arc brings its own nodes, so two arcs that begin at the same point begin at
+        // two different nodes which happen to sit on top of each other. They are one point
+        // and the traversal has to see them as one.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Coast,
+            [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(0, 0), (-30, 0)]);
+        arcGraph.Nodes.Count.Should().Be(3, "the ring brings one node and the spur two");
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Nodes
+            .GroupBy(node => (node.Coordinate.X, node.Coordinate.Y))
+            .Should()
+            .OnlyContain(grouping => grouping.Count() == 1, "no coordinate carries two nodes any more");
+        arcGraph.Arcs.Should().HaveCount(2, "both arcs have length and stay");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldDropTheArc_WhenItHasNoLength(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // An arc every one of whose coordinates is the same point has no direction to be
+        // traced by, and GetDepartureAngle can only answer zero for it, which is enough to
+        // send the traversal the wrong way round the node.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Coast,
+            [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(15, 15), (15, 15)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().ContainSingle("the ring stays and the arc with no length goes");
+        arcGraph.Arcs[0].Kind.Should().Be(ArcKind.Coast);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldStillTraceTheFace_WhenItComesToLessThanTheCoastlineEncloses(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

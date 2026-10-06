@@ -527,15 +527,26 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
   crosses itself understates the ground it covers and four of those exist. The figure to
   watch once the closing failure is fixed is whatever those four leave behind.
 
-**The cause is zero-length arcs.** Welding and splitting leave two *distinct* nodes at one
-identical coordinate - 44 coordinates carry more than one node - and the 50 arcs joining
-such a pair have no length and so no direction. `GetDepartureAngle` falls back to a
-coordinate equal to the start when it can find no different one, so `Atan2(0, 0)` makes a
-zero-length arc claim to leave at angle 0 whatever its real direction. That poisons the
-clockwise order at the node, 4b takes the wrong turn, and the boundary of the region gets
-walked into the outline of the landmass instead of closing into a face of its own. Caught
-in the act around Maharath, where the 314-arc continental outline runs through the window
-and carries arc 10111 twice, once each way, so that arc separates nothing.
+**The cause is arcs that separate nothing.** 56 `Border` arcs - with 27 `Coast`, 5
+`Substate` and 2 `Lake` - have both of their sides in the same ring, so they divide no two
+regions from one another. A region bounded by one of them is not enclosed, no ring closes
+around it, and it never becomes a face. Border arc 11733, 144 points from 4424.6, 2025.1 to
+4412.9, 2057.2, is one of them and lies on Maharath's own boundary; the 314-arc continental
+outline runs through the window and traverses it, which is how Maharath's ground comes to sit
+on the sea side of the partition.
+
+**Zero-length arcs are a second, smaller defect of the same family, and were at first
+mistaken for this one.** Welding and splitting leave two *distinct* nodes at one identical
+coordinate - 44 coordinates carry more than one node - and the 50 arcs joining such a pair
+have no length and so no direction. `GetDepartureAngle` falls back to a coordinate equal to
+the start when it can find no different one, so `Atan2(0, 0)` makes such an arc claim to
+leave at angle 0 whatever its real direction, which is enough on its own to send the
+traversal the wrong way at that node. Merging the nodes and dropping the 58 arcs left with
+no length recovers Tangeria and takes the land lost to self-crossing rings from 18,816
+square units to 5,699 - and leaves all five missing countries missing, which is how it was
+ruled out as the cause here. It also moves the area shortfall from 0.382% to 0.670%, because
+the ground Avanarsuaq used to lose at assembly, in a face dropped for crossing itself, is now
+lost one step earlier in a region that never closes.
 
 A separate hazard found looking for this one: **109 nodes have two half-edges leaving at
 genuinely equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore

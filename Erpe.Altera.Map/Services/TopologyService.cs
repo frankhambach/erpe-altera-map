@@ -48,6 +48,32 @@ public sealed class TopologyService : ITopologyService
 
         int crossings = this.NodeCrossings(arcGraph);
 
+        // Two nodes at one coordinate are one point, however they got there, and an arc
+        // between such a pair has no length and so no direction to leave the node in. That
+        // matters because 4b chooses where to go next by departure angle, and the angle of
+        // a line of no length is whatever Atan2 makes of two zeroes: GetDepartureAngle
+        // falls back to a coordinate equal to the start when it can find no different one,
+        // so such an arc claims to leave at angle 0 whatever lies around it. One of those in
+        // the order is enough to send the traversal the wrong way, and a boundary walked the
+        // wrong way out of its own region ends up in the outline of the landmass instead of
+        // closing into a face.
+        //
+        // This was expected to be what left Maharath, Sanjan, Siam, Dumarune and Sulka with
+        // no ground at all, and it is not: removing these recovers Tangeria and takes the
+        // land lost to self-crossing rings from 18,816 square units to 5,699, but those five
+        // are still missing. What accounts for them is the 56 border arcs that have both of
+        // their sides in one ring, and so separate nothing at all.
+        int merged = MergeCoincidentNodes(arcGraph);
+        int degenerate = RemoveDegenerateArcs(arcGraph);
+        if ((merged > 0) || (degenerate > 0))
+        {
+            Log.Information(
+                "Merged {Merged} nodes onto another at the same coordinate and dropped {Degenerate} arcs left "
+                + "with no length, which have no direction to be traced by.",
+                merged,
+                degenerate);
+        }
+
         List<(DirectedArc[] Ring, double SignedArea)> rings = TraceRings(arcGraph);
         int traced = rings.Sum(ring => ring.Ring.Length);
         if (traced != (arcGraph.Arcs.Count * 2))
@@ -137,6 +163,76 @@ public sealed class TopologyService : ITopologyService
     // from the way back, which keeps the enclosed area on the left throughout. Bounded
     // faces therefore come out anticlockwise with a positive area, and the outer boundary
     // of each separate piece of land comes out the other way round with a negative one.
+    // Nodes sharing a coordinate collapse onto the one with the lowest identifier, so that
+    // the same graph always collapses the same way. They arise from both ends of the
+    // pipeline: noding a crossing adds a node at the rounded intersection, which may land on
+    // a node already there, and cutting a duplicate tracer in 1b adds nodes at the ends of
+    // what it cut.
+    private static int MergeCoincidentNodes(ArcGraph arcGraph)
+    {
+        Dictionary<(double X, double Y), Node> survivors = new Dictionary<(double X, double Y), Node>();
+        Dictionary<Node, Node> replacements = new Dictionary<Node, Node>();
+        foreach (Node node in arcGraph.Nodes.OrderBy(node => node.Id))
+        {
+            (double X, double Y) key = (node.Coordinate.X, node.Coordinate.Y);
+            if (survivors.TryGetValue(key, out Node? survivor))
+            {
+                replacements.Add(node, survivor);
+            }
+            else
+            {
+                survivors.Add(key, node);
+            }
+        }
+
+        if (replacements.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (Arc arc in arcGraph.Arcs)
+        {
+            if (replacements.TryGetValue(arc.StartNode, out Node? startNode))
+            {
+                arc.StartNode = startNode;
+            }
+
+            if (replacements.TryGetValue(arc.EndNode, out Node? endNode))
+            {
+                arc.EndNode = endNode;
+            }
+        }
+
+        Node[] remaining = [.. arcGraph.Nodes.Where(node => !replacements.ContainsKey(node))];
+        arcGraph.Nodes.Clear();
+        foreach (Node node in remaining)
+        {
+            arcGraph.Nodes.Add(node);
+        }
+
+        return replacements.Count;
+    }
+
+    // An arc every one of whose coordinates is the same point. Removing it cannot
+    // disconnect anything, since after the merge above both its ends are the same node.
+    // A closed arc with real geometry - an island, a lake shore - is left alone.
+    private static int RemoveDegenerateArcs(ArcGraph arcGraph)
+    {
+        Arc[] degenerate =
+        [
+            .. arcGraph.Arcs.Where(
+                arc => Array.TrueForAll(
+                    arc.GetFullCoordinates(),
+                    coordinate => coordinate.Equals2D(arc.StartNode.Coordinate))),
+        ];
+        foreach (Arc arc in degenerate)
+        {
+            arcGraph.Arcs.Remove(arc);
+        }
+
+        return degenerate.Length;
+    }
+
     private static List<(DirectedArc[] Ring, double SignedArea)> TraceRings(ArcGraph arcGraph)
     {
         Dictionary<Node, DirectedArc[]> outgoing = BuildOutgoing(arcGraph);
