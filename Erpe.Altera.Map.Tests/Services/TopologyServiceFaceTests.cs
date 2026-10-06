@@ -191,6 +191,47 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldDropBorder_WhenItIsTheCoastDrawnASecondTime(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // A border cannot divide land from sea, so one joining the same two nodes as a coast
+        // arc and running along it is a second copy of the shore. Left in, both copies leave
+        // each of the two nodes, the four half-edges interleave, and a traversal arriving
+        // along the coast takes the border as its next turn and walks inland.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(5.0, 0.02)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().NotContain(arc => arc.Kind == ArcKind.Border);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepBorder_WhenItTakesItsOwnRouteBetweenTheSameNodes(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Two units from the shore is a route of its own rather than a copy of one, and it
+        // divides the ground either side of it. The threshold is a tenth of a unit, which
+        // RemoveCoastDuplicates measures.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(5.0, 2.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().Contain(arc => arc.Kind == ArcKind.Border);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
