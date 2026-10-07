@@ -1180,10 +1180,33 @@ file it was read from.
 
 | File | Stage | Contents |
 | --- | --- | --- |
-| `<out>-coast.svg` | after 2c and 3 | `Coast` and `Lake` arcs, coloured apart, with a dot at every node |
-| `<out>-borders.svg` | after 3 | `Border` and `Substate` arcs, with a dot at every node |
+| `<out>-arcs-before.svg` | after 3, before 4 | every arc of every kind, and the rim |
+| `<out>-arcs-after.svg` | after 4 | the same, with 4a's splits and 4e and 4f's removals |
 | `<out>-faces.svg` | after 5, national pass | every traced face as one path, shell and holes as subpaths |
 | `<out>-dropped.svg` | after 6a | only the faces left out because their ring crosses itself |
+
+**One arc file per stage, not one per kind, and the stages are the point.** There used to be a
+`-coast.svg` and a `-borders.svg`, both written before `BuildFaces`, and **4a is the first thing
+`BuildFaces` does**: it splits arcs at their crossings and mints new identifiers as it goes. On
+this map the highest identifier goes from 11,125 to 11,717 and the count from 9,824 to 10,048, so
+every arc named by a report after that point was missing from the only file there was to search
+in. The five bridges 4d reports — 11204, 11271, 11273, 11395 and 11421 — are all above 11,125,
+and the border file's own identifiers stopped at 9,915. **Anything 4 or 5 names belongs in
+`-arcs-after`; anything 1b, 2c or 3 names belongs in `-arcs-before`**, and an identifier that
+appears in neither has been split or dropped in between.
+
+The two arc files are framed on **the source document's own view box**, used verbatim, and carry
+the rim, so they open on top of the input and on each other with the whitespace around the rim
+intact — 139.9 units to the left, 140.5 to the right, 616.3 above, 369.7 below. Each kind has a
+group of its own — `rim`, `coast`, `lakes`, `substates`, `borders`, `nodes` — so one file can be
+read a layer at a time, and the colour and stroke sit on the group rather than on every line.
+
+The view box comes out as 6408.6406 × 4731.3447 against the source's 6408.64086 × 4731.34476,
+because the SVG reader parses it as `float32` and the source's digits are finer than that carries.
+It is the same reason an arc coordinate reads 2440.353759765625. The framing is off by 0.0002
+units in 6408 and the geometry is not affected, since it comes through the same parse either way.
+The faces and dropped files are still framed on their own padded extent rather than the
+document's.
 
 Each arc carries `data-arc-id` and `data-kind`, each node `data-node-id`, and each face
 `data-face-id` and, where it has one, `data-owner` — so a face or an arc named in a log
@@ -1196,7 +1219,7 @@ owner. A face with no `data-owner` is grey: the ocean, a lake, or ground the bor
 enclosed that nothing claims. Face colours otherwise come from the identifier by golden
 angle, which is only there to tell neighbours apart.
 
-The nodes are the point of the two arc files. Welding is what the arc graph rests on, and a
+The nodes are much of the point of the arc files. Welding is what the arc graph rests on, and a
 node is where it decided two drawn ends were meant to be the same point.
 
 Verified against `Altera_Data_Generating_Map(13).svg`: 6735 coast and lake arcs on 6735
