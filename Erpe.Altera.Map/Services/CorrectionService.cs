@@ -52,6 +52,23 @@ public sealed class CorrectionService : ICorrectionService
     // across an empty decade and a half.
     private const double MaximumNeedleAreaToLengthRatio = 1E-6;
 
+    // How far from a straight line the two legs of a reversal may wander, in units, before the
+    // run is a shape rather than one line walked twice. A grid step: below that the noding grid
+    // cannot tell the vertex off the line in the first place.
+    //
+    // The reversals this is applied to are exact. Of the 169 vertices where a tracer turns by
+    // more than 150 degrees, 14 turn by 180.0000 and the next turns by 179.8903; all 14 have a
+    // straight run either side that deviates from the line through its ends by 0.0000000 units,
+    // and the other 155 have no straight run at all - they are sharp corners, which are drawn
+    // boundary and stay. So this tolerance is a guard rather than a threshold, and nothing on
+    // this map comes near it.
+    private const double MaximumReversalDeviation = 1E-4;
+
+    // The sine of the angle by which a run may depart from straight and still count as part of
+    // the same line, used only to decide how far a reversal reaches. One degree. What keeps this
+    // from mattering is the deviation guard above, which is measured against the line itself.
+    private const double MaximumStraightSine = 0.0175;
+
     private const double DegenerateLength = 1E-9;
 
     private readonly GeometryFactory geometryFactory;
@@ -298,6 +315,23 @@ public sealed class CorrectionService : ICorrectionService
     // Cutting the needle out rather than splitting the arc, because there is nothing here to
     // keep: the stretch removed is the second copy of a line the arc already carries. The arc
     // keeps both of its nodes, since the coordinate the needle returns to is the one it left.
+    //
+    // **A needle does not have to come back to a vertex.** The test above looks for a coordinate
+    // the arc visits twice, and a cusp left by a badly drawn bezier often does not oblige: it
+    // runs out, reverses, and comes back to a point part way along the leg it went out on,
+    // between two of that leg's vertices rather than on one of them. Arc 412 runs 1.85 units out
+    // from 5428.35, 2824.64, turns through exactly 180 degrees at 5426.15, 2825.74, and comes
+    // 0.17 units back to 5426.35, 2825.64 - which lies on the outbound leg but is no vertex of
+    // it. Nothing repeats, so the first test sees nothing.
+    //
+    // So a reversal is looked for as well, and the whole straight run around it is replaced by
+    // the segment from the point where it was entered to the point where it was left. That loses
+    // nothing, because every vertex of the run is on one line: what the run draws is that
+    // segment, walked forwards, backwards, and forwards again.
+    //
+    // These are what the three bridges 4d could not account for were made of - arc 232 at
+    // 3110.99, 2200.27 and arc 412 at 5426.15, 2825.74 - and what the last two faces rejected
+    // for crossing themselves were made of, both on arc 1337 at 3458.22, 2393.30.
     private static void RemoveNeedles(ArcGraph arcGraph)
     {
         Arc[] originals = [.. arcGraph.Arcs];
@@ -312,9 +346,9 @@ public sealed class CorrectionService : ICorrectionService
         {
             List<Coordinate> coordinates = [.. arc.GetFullCoordinates()];
             int found = 0;
-            while (TryFindNeedle(coordinates, out int first, out int last, out double run))
+            while (TryFindNeedle(coordinates, out int from, out int count, out double run))
             {
-                coordinates.RemoveRange(first + 1, last - first);
+                coordinates.RemoveRange(from, count);
                 ++found;
                 removed += run;
                 longest = Math.Max(longest, run);
@@ -359,14 +393,151 @@ public sealed class CorrectionService : ICorrectionService
             dropped);
     }
 
-    // The earliest point the coordinates come back to, with the loop it closes enclosing nothing.
-    // Earliest rather than longest, so that a needle inside a needle is taken from the inside
-    // out and the result does not depend on which was found first.
+    // The vertices to take out, as a start and a count: the earliest point the coordinates come
+    // back to with the loop it closes enclosing nothing, or failing that the earliest reversal.
+    // Earliest rather than longest, so that a needle inside a needle is taken from the inside out
+    // and the result does not depend on which was found first.
+    //
+    // The two cases differ in what they keep. Where a coordinate repeats, one of the two copies
+    // stays and everything between them goes. Where the arc reverses, the points it entered and
+    // left the line at both stay and only what lies between them goes.
     private static bool TryFindNeedle(
         List<Coordinate> coordinates,
-        out int first,
-        out int last,
+        out int from,
+        out int count,
         out double run)
+    {
+        if (TryFindRepeat(coordinates, out int first, out int last))
+        {
+            from = first + 1;
+            count = last - first;
+            run = GetRemovedLength(coordinates, first, last);
+            return true;
+        }
+
+        if (TryFindReversal(coordinates, out int low, out int high))
+        {
+            from = low;
+            count = (high - low) + 1;
+            run = GetRemovedLength(coordinates, low - 1, high + 1);
+            return true;
+        }
+
+        from = 0;
+        count = 0;
+        run = 0.0;
+        return false;
+    }
+
+    // The line the arc gives up: what it walked between the two points that stay, less the one
+    // segment that replaces it. For a repeat the two are the same point and nothing is subtracted.
+    private static double GetRemovedLength(List<Coordinate> coordinates, int first, int last)
+    {
+        double walked = 0.0;
+        for (int k = first; k < last; ++k)
+        {
+            walked += coordinates[k].Distance(coordinates[k + 1]);
+        }
+
+        return walked - coordinates[first].Distance(coordinates[last]);
+    }
+
+    // A vertex the run turns back on itself at, with every vertex of the straight run around it
+    // on one line. Returns the run as the pair of points it is to be replaced by, so that the
+    // caller removes what lies between them exactly as it does for a repeated coordinate.
+    private static bool TryFindReversal(List<Coordinate> coordinates, out int low, out int high)
+    {
+        for (int i = 1; i < (coordinates.Count - 1); ++i)
+        {
+            if (!IsReversal(coordinates, i))
+            {
+                continue;
+            }
+
+            // Out to both sides for as long as the line holds, which a reversal counts towards
+            // as much as going straight on does: both mean the three points are collinear.
+            low = i;
+            while ((low - 1) >= 1 && IsStraight(coordinates, low - 1))
+            {
+                --low;
+            }
+
+            high = i;
+            while ((high + 1) <= (coordinates.Count - 2) && IsStraight(coordinates, high + 1))
+            {
+                ++high;
+            }
+
+            if (IsOnOneLine(coordinates, low - 1, high + 1))
+            {
+                return true;
+            }
+        }
+
+        low = 0;
+        high = 0;
+        return false;
+    }
+
+    // The two segments meeting at this vertex point along one line and in opposite directions.
+    // Measured as a sine rather than an angle, which is what makes it exact here: arc cosine
+    // loses its precision at the very place this is asking about.
+    private static bool IsReversal(List<Coordinate> coordinates, int index)
+    {
+        (double X, double Y) before = (
+            coordinates[index].X - coordinates[index - 1].X,
+            coordinates[index].Y - coordinates[index - 1].Y);
+        (double X, double Y) after = (
+            coordinates[index + 1].X - coordinates[index].X,
+            coordinates[index + 1].Y - coordinates[index].Y);
+
+        return IsStraight(coordinates, index) && (((before.X * after.X) + (before.Y * after.Y)) < 0.0);
+    }
+
+    private static bool IsStraight(List<Coordinate> coordinates, int index)
+    {
+        (double X, double Y) before = (
+            coordinates[index].X - coordinates[index - 1].X,
+            coordinates[index].Y - coordinates[index - 1].Y);
+        (double X, double Y) after = (
+            coordinates[index + 1].X - coordinates[index].X,
+            coordinates[index + 1].Y - coordinates[index].Y);
+        double lengths = Math.Sqrt(((before.X * before.X) + (before.Y * before.Y))
+            * ((after.X * after.X) + (after.Y * after.Y)));
+
+        return (lengths < DegenerateLength)
+            || (Math.Abs((before.X * after.Y) - (before.Y * after.X)) <= (MaximumStraightSine * lengths));
+    }
+
+    // Every vertex between the two ends within a grid step of the line joining them. The guard
+    // the rule actually rests on: the walk out from the reversal uses an angle, which says
+    // nothing about how far the far end of a long run has drifted.
+    private static bool IsOnOneLine(List<Coordinate> coordinates, int first, int last)
+    {
+        double lineX = coordinates[last].X - coordinates[first].X;
+        double lineY = coordinates[last].Y - coordinates[first].Y;
+        double length = Math.Sqrt((lineX * lineX) + (lineY * lineY));
+        if (length < DegenerateLength)
+        {
+            return true;
+        }
+
+        for (int k = first + 1; k < last; ++k)
+        {
+            double deviation = Math.Abs(
+                    (lineX * (coordinates[k].Y - coordinates[first].Y))
+                    - (lineY * (coordinates[k].X - coordinates[first].X)))
+                / length;
+            if (deviation > MaximumReversalDeviation)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryFindRepeat(List<Coordinate> coordinates, out int first, out int last)
     {
         Dictionary<(double X, double Y), int> seen = [];
         for (int j = 0; j < coordinates.Count; ++j)
@@ -390,7 +561,6 @@ public sealed class CorrectionService : ICorrectionService
                 {
                     first = i;
                     last = j;
-                    run = length;
                     return true;
                 }
             }
@@ -400,7 +570,6 @@ public sealed class CorrectionService : ICorrectionService
 
         first = 0;
         last = 0;
-        run = 0.0;
         return false;
     }
 

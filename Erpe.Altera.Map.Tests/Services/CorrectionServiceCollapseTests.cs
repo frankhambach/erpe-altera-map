@@ -176,6 +176,70 @@ public class CorrectionServiceCollapseTests
 
     [AutoCustomizedData]
     [Test]
+    public void Collapse_ShouldCutOutTheNeedle_WhenTheArcReversesAndComesBackBetweenTwoVertices(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // A cusp left by a badly drawn bezier. The arc runs out along the x axis, turns through
+        // 180 degrees at (10, 0), and comes back to (3, 0) - which lies on the leg it went out on
+        // but is not one of that leg's vertices. No coordinate repeats, so looking for a point
+        // visited twice finds nothing, and the three bridges 4d could not account for were made
+        // of exactly this.
+        //
+        // What the run draws is the segment from (0, 0) to (3, 0), walked forwards, backwards and
+        // forwards again, so that is what it is replaced by.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            [(0, 10), (0, 0), (4, 0), (8, 0), (10, 0), (6, 0), (3, 0), (3, -5)]);
+
+        CreateService(coordinateSequenceFactory).Collapse(arcGraph, 0.25);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates()
+            .Select(coordinate => (coordinate.X, coordinate.Y))
+            .Should()
+            .Equal((0.0, 10.0), (0.0, 0.0), (3.0, 0.0), (3.0, -5.0));
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Collapse_ShouldKeepTheCorner_WhenTheArcTurnsSharplyWithoutRunningBackOnItself(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The limit of that rule, and the reason it asks for one line rather than a sharp angle.
+        // 169 vertices on the sample map turn by more than 150 degrees and only 14 of them are
+        // cusps; the other 155 are corners like this one, where the arc comes back at 174 degrees
+        // but along its own route. A corner is drawn boundary and stays.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (0, 1)]);
+
+        CreateService(coordinateSequenceFactory).Collapse(arcGraph, 0.25);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().HaveCount(3);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Collapse_ShouldKeepTheSliver_WhenAReversalsTwoLegsAreNotOnOneLine(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The guard the rule rests on. Half a degree off straight counts as a reversal by the
+        // angle, which is all the walk out from the cusp uses, but the far end of this run stands
+        // 10 units off the line joining the two ends. Collapsing it would move the boundary, so
+        // the deviation is measured against that line and this is left as it is.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (0, 0.08)]);
+
+        CreateService(coordinateSequenceFactory).Collapse(arcGraph, 0.25);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().HaveCount(3);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Collapse_ShouldDropTheRepeatedVertex_WhenAPointIsDrawnTwiceOver(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
