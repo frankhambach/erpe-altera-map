@@ -57,7 +57,7 @@ public sealed class TopologyService : ITopologyService
     // arcs would have to be recovered afterwards by comparing coordinates. Tracing keeps
     // every face referring to the very same Arc objects, which is what makes neighbouring
     // countries share a border exactly instead of merely agreeing to within rounding.
-    public void BuildFaces(ArcGraph arcGraph, double enclosedArea)
+    public void BuildFaces(ArcGraph arcGraph, double enclosedArea, double dangleTolerance)
     {
         ArgumentNullException.ThrowIfNull(arcGraph);
 
@@ -122,6 +122,21 @@ public sealed class TopologyService : ITopologyService
                 duplicates,
                 duplicateLength,
                 widest);
+        }
+
+        (int dangles, double dangleLength, double longestDangle) = RemoveDanglingArcs(
+            arcGraph,
+            dangleTolerance);
+        if (dangles > 0)
+        {
+            Log.Information(
+                "Pruned {Dangles} arcs covering {Length:0.##} units that end on a node with nothing else on it "
+                + "and are shorter than the {Tolerance} unit weld tolerance, the longest {Longest:0.##} units. "
+                + "An overshoot past a crossing, which encloses nothing and divides nothing.",
+                dangles,
+                dangleLength,
+                dangleTolerance,
+                longestDangle);
         }
 
         List<(DirectedArc[] Ring, double SignedArea)> rings = TraceRings(arcGraph);
@@ -225,6 +240,69 @@ public sealed class TopologyService : ITopologyService
     // Reported rather than repaired, because the repair is a line in the source map: either
     // a border is missing where the chain should have closed, or the chain is drawn out into
     // the open and should not be there at all.
+    // An arc with nothing on the far end of it. It bounds no region on either side, so a
+    // traversal that reaches it walks out and straight back, and 4d reports it as separating
+    // nothing - which is exactly what it is.
+    //
+    // These are overshoots. Where two borders that should meet at a point instead cross a little
+    // before their ends, 4a nodes the crossing and the stubs beyond it are left over; 4f drops
+    // one of the pair as a duplicate, and the survivor is a dangle. That is arc 11378 at
+    // 4483.17, 1829.51, 0.19 units of the Kinar border past the point where it crosses the one it
+    // was drawn to meet, with the three borders of that junction properly joined at the crossing
+    // and this piece hanging off it.
+    //
+    // **Bounded by the weld tolerance, and the bound is the whole point.** Below 0.5 units an
+    // overshoot is inside the distance at which phase 3 already declares two drawn ends to be the
+    // same point, so there is nothing in it. Above that a dangle is a real failure - a chain that
+    // never closed, a region that got no face - and pruning it would delete the evidence instead
+    // of the defect. Prabang's border dangled for 44 units and reading that report is how it was
+    // found. So the long ones stay and 4d goes on reporting them.
+    //
+    // Repeated to a fixpoint, because the arc behind a pruned one can be left dangling in its
+    // turn. On this map it settles in one round: 2 arcs, 0.012 and 0.19 units, which are the last
+    // two 4d had to report, and nothing behind them.
+    private static (int Pruned, double Length, double Longest) RemoveDanglingArcs(
+        ArcGraph arcGraph,
+        double dangleTolerance)
+    {
+        int pruned = 0;
+        double length = 0.0;
+        double longest = 0.0;
+        while (true)
+        {
+            Dictionary<Node, int> degrees = new Dictionary<Node, int>();
+            foreach (Arc arc in arcGraph.Arcs)
+            {
+                degrees[arc.StartNode] = degrees.GetValueOrDefault(arc.StartNode) + 1;
+                degrees[arc.EndNode] = degrees.GetValueOrDefault(arc.EndNode) + 1;
+            }
+
+            // A closed arc is left alone: its one node carries both of its ends, so a degree of
+            // two there says nothing about whether anything else meets it.
+            Arc[] dangling =
+            [
+                .. arcGraph.Arcs.Where(
+                    arc => (arc.StartNode != arc.EndNode)
+                        && ((degrees.GetValueOrDefault(arc.StartNode) == 1)
+                            || (degrees.GetValueOrDefault(arc.EndNode) == 1))
+                        && (GetLength(arc.GetFullCoordinates()) <= dangleTolerance)),
+            ];
+            if (dangling.Length == 0)
+            {
+                return (pruned, length, longest);
+            }
+
+            foreach (Arc arc in dangling)
+            {
+                double arcLength = GetLength(arc.GetFullCoordinates());
+                length += arcLength;
+                longest = Math.Max(longest, arcLength);
+                arcGraph.Arcs.Remove(arc);
+                ++pruned;
+            }
+        }
+    }
+
     private static void ReportBridges(List<(DirectedArc[] Ring, double SignedArea)> rings)
     {
         Dictionary<Arc, int> ringsPerArc = new Dictionary<Arc, int>();

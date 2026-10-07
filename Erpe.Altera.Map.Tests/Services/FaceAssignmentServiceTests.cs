@@ -28,7 +28,7 @@ public class FaceAssignmentServiceTests
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 30);
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 30);
 
         new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
@@ -47,7 +47,7 @@ public class FaceAssignmentServiceTests
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 30);
         AddRing(arcGraph, coordinateSequenceFactory, 10, 10, 10, ArcKind.Lake);
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 30);
 
         new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
@@ -68,7 +68,7 @@ public class FaceAssignmentServiceTests
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 60);
         AddRing(arcGraph, coordinateSequenceFactory, 10, 10, 40, ArcKind.Lake);
         AddRing(arcGraph, coordinateSequenceFactory, 20, 20, 20);
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 60);
 
         new FaceAssignmentService(geometryFactory).Assign(arcGraph, [country], true);
@@ -92,7 +92,7 @@ public class FaceAssignmentServiceTests
         AddArc(arcGraph, coordinateSequenceFactory, west, east, [(0, 40), (60, 40)]);
         AddArc(arcGraph, coordinateSequenceFactory, west, east, [(0, -40), (60, -40)]);
         AddArc(arcGraph, coordinateSequenceFactory, west, east, []);
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         // Only the northern half is covered by a country; the southern half is the gap.
         Country country = CreateCountry(geometryFactory, "Nowhere", 0, 0, 60, 40);
@@ -114,7 +114,7 @@ public class FaceAssignmentServiceTests
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 100);
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         Country most = new Country(
             "Most",
             CountryType.UnitaryState,
@@ -140,7 +140,7 @@ public class FaceAssignmentServiceTests
         GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         AddRing(arcGraph, coordinateSequenceFactory, 0, 0, 100);
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         Country sliver = CreateCountry(geometryFactory, "Sliver", 0, 0, 8, 100);
 
         new FaceAssignmentService(geometryFactory).Assign(arcGraph, [sliver], false);

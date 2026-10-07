@@ -559,7 +559,7 @@ internal sealed class ConvertCommand : Command
                 .ConfigureAwait(false);
         }
 
-        this.topologyService.BuildFaces(arcGraph, enclosedArea);
+        this.topologyService.BuildFaces(arcGraph, enclosedArea, MergeTolerance);
 
         if (debugSvg)
         {

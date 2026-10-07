@@ -12,7 +12,10 @@ using NetTopologySuite.Geometries;
 public interface ITopologyService
 {
     // enclosedArea is what the faces have to come to, from ICoastlineService.AddArcs.
-    void BuildFaces(ArcGraph arcGraph, double enclosedArea);
+    // dangleTolerance is how long an arc ending on a node with nothing else on it may be before
+    // it is kept and reported rather than pruned as an overshoot. The weld tolerance, since
+    // below that distance two drawn ends are already taken for one point.
+    void BuildFaces(ArcGraph arcGraph, double enclosedArea, double dangleTolerance);
 
     LinearRing Close(CoordinateSequence coordinateSequence);
 

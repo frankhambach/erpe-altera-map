@@ -64,7 +64,7 @@ public class DiagnosticsServiceTests
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         arcGraph.AddArc(ArcKind.Coast, coordinateSequenceFactory.Create(CreateRing(0, 0, 60)));
         arcGraph.AddArc(ArcKind.Lake, coordinateSequenceFactory.Create(CreateRing(10, 10, 20)));
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         arcGraph.Faces[0].Owner = new Country("Nowhere", CountryType.UnitaryState, []);
         FileInfo file = CreateFile();
 
@@ -98,7 +98,7 @@ public class DiagnosticsServiceTests
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
         arcGraph.AddArc(ArcKind.Coast, coordinateSequenceFactory.Create(CreateRing(0, 0, 60)));
         arcGraph.AddArc(ArcKind.Lake, coordinateSequenceFactory.Create(CreateRing(10, 10, 20)));
-        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0);
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
         FileInfo file = CreateFile();
 
         try

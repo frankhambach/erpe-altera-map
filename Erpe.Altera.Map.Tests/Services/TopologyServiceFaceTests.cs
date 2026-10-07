@@ -28,7 +28,7 @@ public class TopologyServiceFaceTests
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         Face face = arcGraph.Faces.Should().ContainSingle().Subject;
         face.Holes.Should().BeEmpty();
@@ -49,7 +49,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0, -10), (10, -10)]);
         Arc border = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Faces.Should().HaveCount(2);
         arcGraph.Faces.Should()
@@ -68,7 +68,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(10, 10), (20, 10), (20, 20), (10, 20), (10, 10)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Faces.Should().HaveCount(2, "the island and the lake inside it");
         Face island = arcGraph.Faces.MaxBy(face => face.Shell.Length == 1 ? 1 : 0)!;
@@ -87,7 +87,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(-10, 0), (10, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(0, -10), (0, 10)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().HaveCount(4, "both arcs are split at the crossing");
         arcGraph.Arcs.Select(arc => arc.StartNode)
@@ -112,7 +112,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0, -10), (10, -10)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         int inFaces = arcGraph.Faces.Sum(face => face.Shell.Length + face.Holes.Sum(hole => hole.Length));
         int outlines = (arcGraph.Arcs.Count * 2) - inFaces;
@@ -138,7 +138,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(0, 0), (-30, 0)]);
         arcGraph.Nodes.Count.Should().Be(3, "the ring brings one node and the spur two");
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Nodes
             .GroupBy(node => (node.Coordinate.X, node.Coordinate.Y))
@@ -163,7 +163,7 @@ public class TopologyServiceFaceTests
             [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, [(15, 15), (15, 15)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().ContainSingle("the ring stays and the arc with no length goes");
         arcGraph.Arcs[0].Kind.Should().Be(ArcKind.Coast);
@@ -184,7 +184,7 @@ public class TopologyServiceFaceTests
             ArcKind.Coast,
             [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 2000.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 2000.0, 0.0);
 
         arcGraph.Faces.Should().ContainSingle();
     }
@@ -212,7 +212,7 @@ public class TopologyServiceFaceTests
             east,
             [(10.00003, 0.00002)]);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().NotContain(speck).And.HaveCount(2);
     }
@@ -242,7 +242,7 @@ public class TopologyServiceFaceTests
         Node dangling = arcGraph.AddNode(new Coordinate(10.00003, 0.00002));
         Arc stub = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, east, dangling, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().NotContain(stub).And.HaveCount(3);
         arcGraph.Nodes.Should().NotContain(dangling);
@@ -266,7 +266,7 @@ public class TopologyServiceFaceTests
         Node tip = arcGraph.AddNode(new Coordinate(10.01, 0.0));
         Arc stub = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, east, tip, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().Contain(stub);
         arcGraph.Nodes.Should().Contain(tip).And.Contain(east);
@@ -289,7 +289,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().NotContain(arc => arc.Kind == ArcKind.Border);
     }
@@ -312,7 +312,7 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
         Arc second = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().NotContain(second).And.Contain(arc => arc.Kind == ArcKind.Border);
     }
@@ -333,9 +333,76 @@ public class TopologyServiceFaceTests
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
         AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, []);
 
-        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
 
         arcGraph.Arcs.Should().Contain(arc => arc.Kind == ArcKind.Border);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldPruneTheArc_WhenItDanglesAndIsShorterThanTheTolerance(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // An overshoot: two borders that should meet at a point cross a little before their ends,
+        // 4a nodes the crossing, and what is left beyond it ends on a node with nothing else on
+        // it. It bounds no region on either side, so the traversal walks out and straight back and
+        // 4d reports it as separating nothing. Arc 11378 was 0.19 units of exactly this.
+        //
+        // The other tests here pass a tolerance of zero, so that each stays about the one rule it
+        // was written for.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Node tip = arcGraph.AddNode(new Coordinate(10.2, 0.0));
+        Arc overshoot = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, east, tip, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.5);
+
+        arcGraph.Arcs.Should().NotContain(overshoot).And.HaveCount(2);
+        arcGraph.Faces.Should().ContainSingle();
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepTheArc_WhenItDanglesButIsLongerThanTheTolerance(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The bound is the whole point of the rule. Below the weld tolerance an overshoot is
+        // inside the distance at which phase 3 already calls two drawn ends one point, so there is
+        // nothing in it. A longer dangle is a real failure - a chain that never closed, a region
+        // that got no face - and pruning it would delete the evidence rather than the defect.
+        // Prabang's border dangled for 44 units and reading that report is how it was found.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Node tip = arcGraph.AddNode(new Coordinate(14.0, 0.0));
+        Arc dangle = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, east, tip, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.5);
+
+        arcGraph.Arcs.Should().Contain(dangle);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepTheIsland_WhenAClosedArcIsShorterThanTheTolerance(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // A closed arc is not a dangle however small. Its one node carries both of its ends, so a
+        // degree of two there says nothing about whether anything else meets it, and what it
+        // encloses is real: this is an island two tenths of a unit across.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Arc island = arcGraph.AddArc(
+            ArcKind.Coast,
+            Create(coordinateSequenceFactory, [(0.0, 0.0), (0.2, 0.0), (0.2, 0.2), (0.0, 0.0)]));
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.5);
+
+        arcGraph.Arcs.Should().Contain(island);
     }
 
     [AutoCustomizedData]
@@ -343,7 +410,7 @@ public class TopologyServiceFaceTests
     public void BuildFaces_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
-        Action action = () => CreateService(coordinateSequenceFactory).BuildFaces(null!, 0.0);
+        Action action = () => CreateService(coordinateSequenceFactory).BuildFaces(null!, 0.0, 0.0);
 
         action.Should().Throw<ArgumentNullException>();
     }
