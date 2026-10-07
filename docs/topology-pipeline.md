@@ -239,6 +239,45 @@ already walked in the other direction — one ring of 33 half-edges with *both s
 in it*, so the two countries came out as one face, with three faces of 0.000003 square units and
 less left beside it.
 
+**A needle does not have to come back to a vertex.** The test above looks for a coordinate the
+arc visits twice, and a cusp left by a badly drawn bezier often does not oblige: it runs out,
+reverses, and comes back to a point part way along the leg it went out on, *between* two of that
+leg's vertices rather than on one of them. Arc 412 runs 1.85 units out from 5428.35, 2824.64,
+turns through exactly 180 degrees at 5426.15, 2825.74, and comes 0.17 units back to 5426.35,
+2825.64 — on the outbound leg, and no vertex of it. Nothing repeats, so nothing is found.
+
+So **a reversal is looked for as well**, and the whole straight run around it is replaced by the
+segment from the point where the arc entered the line to the point where it left. That loses
+nothing: every vertex of the run is on one line, and what the run draws is that segment walked
+forwards, backwards and forwards again.
+
+The population is as clean as the one above. Of the **169 vertices where a tracer turns by more
+than 150°, 14 turn by 180.0000** and the next turns by **179.8903**; all 14 have a straight run
+either side deviating from the line through its ends by **0.0000000** units, and the other 155
+have no straight run at all — they are **sharp corners**, which are drawn boundary and stay.
+
+Two details of the measurement earn their place. The reversal is read as a **sine** rather than an
+angle, because arc cosine loses its precision at exactly the place this asks about. And the rule
+rests on a **deviation guard of one grid step**, measured against the line joining the two ends,
+rather than on the 1° used to walk outwards from the cusp: an angle says nothing about how far the
+far end of a long run has drifted.
+
+**Ten of the 14 were already going**, because in those arcs the needle does return to a vertex.
+The four that were not are the three arcs 4d reported as separating nothing that nothing else
+could account for — 11204 on arc 232, 11271 and 11273 on arc 412 — and **both of the faces still
+being rejected for crossing themselves**, both on arc 1337.
+
+| | before | after |
+| --- | --- | --- |
+| arcs separating nothing (4d) | 5 | **2** |
+| faces rejected for crossing themselves | 2 | **0** |
+| needles cut | 25 over 19 arcs | 28 over 22 |
+| crossings noded (4a) | 173 | 157 |
+| unaccounted boundary (7) | 5,595 segments | 5,567 |
+
+Gimbiyu gives 65 square kilometres to Wagima and five other countries move by under 2; the net
+over 1,590 rows is −1.7, so this is redistribution. The land inside no face does not move.
+
 **Told apart by what the loop encloses**, as an area over its length — the hydraulic radius, for
 the fifth time in this pipeline. **`MaximumNeedleAreaToLengthRatio` = 1e-6**, and this one needed
 no judgement at all: 22 of the 26 loops enclose *exactly* nothing, three come to 4.0e-10, 5.6e-10
@@ -767,15 +806,16 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **5 of them on this map**,
+whatever it was drawn to enclose is left open to what lies outside. **2 of them on this map**,
 down from 61 as 1b-bis, 2c, 2c-ter, 3a-bis, 3b, 4e and 4f took away the causes found so far, and
 the twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
 
-The five that remain are all 2- and 3-point arcs of 0.2 units or less, where 19 of the 24 before
-them were debris from the needles of 1b-bis. **This list was never 24 questions**; it was one
-defect wearing 19 hats, and that is the strongest argument in this plan for reading a symptom back
-to its cause rather than working down the list.
+The two that remain are a 3-point arc spanning 0.0024 units at 3634.87, 1420.38 and a 2-point arc
+of 0.19 units at 4483.17, 1829.51. Of the 24 before them, 19 were debris from the needles that
+return to a vertex and 3 more from the needles that reverse without returning to one. **This list
+was never 24 questions**; it was two defects wearing 22 hats, and that is the strongest argument
+in this plan for reading a symptom back to its cause rather than working down the list.
 
 A dangling node — one with a single arc end on it — makes that arc a bridge by itself, and
 there were 9 before 3a-bis. Counting them is the cheapest way in: each names an arc and a
@@ -1406,7 +1446,7 @@ and the collapse-not-delete semantics (0e).
 2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
    all, so something between the faces and the output is inventing coordinates; the unlooping
    in 6a is the next suspect. Both figures want re-measuring after 1.
-3. **The 5 arcs that separate nothing**, down from 61. Each is a question rather than an
+3. **The 2 arcs that separate nothing**, down from 61. Each is a question rather than an
    answer: two of them turned out to be the coast's fault rather than the border's, and 2c-ter
    and 4f fixed those in the pipeline, so reading the rest as "work on the source map" — as
    this plan did — is an assumption and not a finding. Arc 9496 at 3704.35, 2970.64 is still
