@@ -1195,18 +1195,22 @@ and the border file's own identifiers stopped at 9,915. **Anything 4 or 5 names 
 `-arcs-after`; anything 1b, 2c or 3 names belongs in `-arcs-before`**, and an identifier that
 appears in neither has been split or dropped in between.
 
-The two arc files are framed on **the source document's own view box**, used verbatim, and carry
-the rim, so they open on top of the input and on each other with the whitespace around the rim
+**All four files are framed on the source document's own view box**, used verbatim, so they open
+on top of the input and on each other, and the stroke width that follows from the frame is the
+same in all four. The two arc files also carry the rim, which leaves the whitespace around it
 intact — 139.9 units to the left, 140.5 to the right, 616.3 above, 369.7 below. Each kind has a
 group of its own — `rim`, `coast`, `lakes`, `substates`, `borders`, `nodes` — so one file can be
 read a layer at a time, and the colour and stroke sit on the group rather than on every line.
+
+Shared framing is a **trade for the dropped file**, which holds a handful of faces and often tiny
+ones: the two on this map are 0.2 units across, and fitted to its own contents it showed them
+filling the frame. Framed on the document they are specks, so it now says where they are rather
+than what they look like.
 
 The view box comes out as 6408.6406 × 4731.3447 against the source's 6408.64086 × 4731.34476,
 because the SVG reader parses it as `float32` and the source's digits are finer than that carries.
 It is the same reason an arc coordinate reads 2440.353759765625. The framing is off by 0.0002
 units in 6408 and the geometry is not affected, since it comes through the same parse either way.
-The faces and dropped files are still framed on their own padded extent rather than the
-document's.
 
 Each arc carries `data-arc-id` and `data-kind`, each node `data-node-id`, and each face
 `data-face-id` and, where it has one, `data-owner` — so a face or an arc named in a log
