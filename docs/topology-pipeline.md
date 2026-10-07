@@ -710,8 +710,8 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **25 of them on this
-map**, down from 61 as 2c, 2c-ter, 3a-bis, 3b and 4f took away the causes found so far, and
+whatever it was drawn to enclose is left open to what lies outside. **24 of them on this
+map**, down from 61 as 2c, 2c-ter, 3a-bis, 3b, 4e and 4f took away the causes found so far, and
 the twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
 
@@ -727,7 +727,7 @@ separate problems:
 | symptom | what the chain did | where it shows |
 | --- | --- | --- |
 | two countries share a face | failed partway, so the region is not divided | 5b, 14 fused faces |
-| a country gets no ground at all | failed completely, so the region never closes | 4's area check, 0.301% |
+| a country gets no ground at all | failed completely, so the region never closes | 4's area check, 0.0130% |
 | an arc end resolves to nothing | fell short of what it should meet | 3d, 1 end at 12.48 units |
 
 Every one of the fused faces has a bridge beside it - Deseret and Arizona on arc 8377,
@@ -769,12 +769,70 @@ What it does do, measured on one build with the merge switched off and on, is ta
 that separate nothing from **84 down to 61**. So it is a real repair to the topology, just
 not the one that was being looked for.
 
-**What counts as no length is the noding grid, and only for the arc.** A closed arc goes when
-the grid puts every one of its coordinates at its own node, which reaches 72 arcs where asking
-for coordinates exactly equal reached 54. The two nodes of an *open* arc that small are left
-alone, and item 8 below has the measurement that says why: the drawn geometry never passes
-through the precision model, so two nodes inside a grid step of each other are two real points
-in the data, and merging them costs twelve countries their ground.
+**What counts as no length is the noding grid.** A closed arc goes when the grid puts every one
+of its coordinates at its own node, which reaches 72 arcs where asking for coordinates exactly
+equal reached 54. An *open* arc that small has its two nodes brought together instead, and then
+goes the same way.
+
+**That is not the merge item 8 ruled out, and the difference is the whole argument.** Merging any
+two nodes within a grid step of each other costs twelve countries their ground, because the drawn
+geometry never passes through the precision model and two nodes that close together are two real
+points in the data. The two nodes at the two ends of *one arc* are not two such points: they are
+already joined by that arc, so bringing them together is an **edge contraction**, and contracting
+an edge cannot change what is connected to what. Only the arc's own length goes, and the grid has
+already said that length is below what it can represent. 55 arcs, 30 nodes; 25 of the 55 had
+their two nodes at one identical coordinate and the exact merge was already handling those, so 30
+arcs are new, the longest 0.000166 units.
+
+**These arcs are made rather than drawn.** 4a makes every crossing point precise and nothing else
+ever passes through the model, so a crossing computed where a vertex was already drawn lands a
+fraction of a grid step *beside* it instead of on it. Arc 11706 joins the noded node 9560 at
+2440.3538, 857.6366 to the drawn node 633 at 2440.35376, 857.636597 and is 0.00004 units long.
+The 4-decimal coordinate against the float one is the signature.
+
+**This is what the 0.301% was**, or 95.7% of it. An island shared between Avanarsuaq and
+Qausuittuq has a coast of three arcs, 2317 units of it, with a substate border across the middle
+dividing the two countries, and it should trace as two faces. Node 633 has nothing on it but the
+0.00004-unit stub, so the stub is a bridge by itself. The traversal came down the 679-unit arc
+into node 9560, took the stub first in the departure order, walked to the dangling node and
+straight back, and from there retraced every arc it had already walked in the other direction:
+one ring of ten half-edges with a signed area of exactly **zero**, bounding nothing, and the whole
+landmass inside no face.
+
+| | before | after |
+| --- | --- | --- |
+| land inside no face | 17,610.0 (**0.301%**) | 759.0 (**0.0130%**) |
+| faces traced | 6,989 | 6,991 |
+| arcs separating nothing | 25 | 24 |
+| unaccounted boundary of 7 | 0.420% | 0.417% |
+
+That last row is not an improvement and should not be read as one: the count of unaccounted
+segments is **5,671 either way**. Only the share moved, because the two new faces put more
+boundary into the denominator. The commit for this change quotes the row as 0.431% to 0.417%,
+which took the baseline from before 3a-bis rather than from before this; 0.420% is the figure
+this was measured against.
+
+Of 1592 rows four move and none loses ground: Avanarsuaq 528,098 → **675,591** against 680,444
+expected, Qausuittuq 534,615 → **587,877** against 591,857, and Nunangats gains 200,754, which is
+*exactly* the sum of its two substates' gains. The shortfall now sits under the 0.1% the check
+reports at, so 4's area error no longer fires.
+
+**The signature is gone rather than reduced.** Scanning every ring for the pattern that caused
+this — a ring that walks each of its arcs in both directions — finds none afterwards where there
+was one before. So this was a single instance and not a class, and the 759 units left is a
+different failure mode with its own cause still to find.
+
+The test is metric — no coordinate of the arc reaches one grid step from its start — rather than
+the exact mirror of the closed-arc test above. Asking whether the grid rounds every coordinate
+onto the start node catches 53 of the 55 and misses two, because whether two points a fraction of
+a step apart round together depends on where in the cell they fall. Both give identical output
+here, so the two extra arcs change nothing measurable; the metric one is simply the rule that
+means what it says.
+
+Seven of the contractions leave a sibling behind: another arc joined the same two nodes and is
+longer than a grid step, so it becomes a closed ring rather than going. All seven are tracer loops
+of 0.18 units or less on nodes of degree four or more, where two real arcs already meet and
+nothing is hidden, so they are left alone.
 
 **4f. Drop an arc that is another arc drawn a second time.** Two arcs joining the same pair
 of nodes and running along each other the whole way are one line drawn twice. Both copies
@@ -1259,7 +1317,7 @@ and the collapse-not-delete semantics (0e).
 2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
    all, so something between the faces and the output is inventing coordinates; the unlooping
    in 6a is the next suspect. Both figures want re-measuring after 1.
-3. **The 25 arcs that separate nothing**, down from 61. Each is a question rather than an
+3. **The 24 arcs that separate nothing**, down from 61. Each is a question rather than an
    answer: two of them turned out to be the coast's fault rather than the border's, and 2c-ter
    and 4f fixed those in the pipeline, so reading the rest as "work on the source map" — as
    this plan did — is an assumption and not a finding. Arc 9496 at 3704.35, 2970.64 is still
