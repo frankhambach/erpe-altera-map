@@ -806,22 +806,61 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **2 of them on this map**,
-down from 61 as 1b-bis, 2c, 2c-ter, 3a-bis, 3b, 4e and 4f took away the causes found so far, and
-the twenty longest are named with their coordinates so that `--debug-svg` can find them by
+whatever it was drawn to enclose is left open to what lies outside. **None of them on this map**,
+down from 61 as 1b-bis, 2c, 2c-ter, 3a-bis, 3b, 4d-bis, 4e and 4f took away the causes one by one,
+and the twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
 
-The two that remain are a 3-point arc spanning 0.0024 units at 3634.87, 1420.38 and a 2-point arc
-of 0.19 units at 4483.17, 1829.51. Of the 24 before them, 19 were debris from the needles that
-return to a vertex and 3 more from the needles that reverse without returning to one. **This list
-was never 24 questions**; it was two defects wearing 22 hats, and that is the strongest argument
-in this plan for reading a symptom back to its cause rather than working down the list.
+**This list was never 61 questions.** Of the 24 that stood after the fused faces were settled, 19
+were debris from the needles that return to a vertex, 3 more from the needles that reverse without
+returning to one, and the last 2 were overshoots past a crossing. Four defects wearing 24 hats.
+That is the strongest argument in this plan for reading a symptom back to its cause rather than
+working down the list it produces.
+
+### 4d-bis. Prune an arc with nothing on the far end of it
+
+The last two entries on that list were **overshoots**, and they are worth the walk because the
+chain that makes one runs through half this document.
+
+Three borders meet south of **Masikh** and none of them quite meets the others. As drawn, arc 769
+ends at 4482.9507, 1829.7666, arc 1081 starts at 4483.3506, 1829.6366 and arc 1086 starts at
+4482.3506, 1829.6366. The three distances between those ends are **0.42, 0.61 and 1.00**, so 3a
+joins one pair and leaves the third end for 3b, which welds it onto arc 1081's body and splits it
+there — making node 2171 the three-way junction it ought to be. So far so good.
+
+What 3a leaves behind is the defect. Moving arc 769's end and arc 1081's start onto one node puts
+arc 1081's first 1.39 units back across the line arc 769 came in on, so **the two cross 0.19 units
+from the node they now share**. 4a nodes that crossing and cuts both arcs; the two pieces beyond it
+join the same two nodes with a sliver of hydraulic radius 0.022 between them, so 4f drops one as a
+duplicate — and the survivor has nothing on its far end.
+
+| | |
+| --- | --- |
+| `n9294 --11377 (2.61)--> n9563 --11501 (1.09)--> n2171` | the junction, degree 3 |
+| `n9563 --11378 (0.19)--> n2161` | the overshoot, degree 1 |
+
+So **a dangling arc shorter than the weld tolerance is pruned**, repeated to a fixpoint because
+the arc behind one can be left dangling in its turn.
+
+**The bound is the rule and not a detail of it.** Below 0.5 units an overshoot is inside the
+distance at which 3a already declares two drawn ends to be the same point, so there is nothing in
+it. A longer dangle is a real failure — a chain that never closed, a region that got no face — and
+pruning it would delete the evidence instead of the defect. **Prabang's border dangled for 44
+units and reading that report is how it was found.** So the long ones stay and 4d goes on
+reporting them.
+
+Measured, and unusually tightly: **exactly 2 arcs on this map have a dangling end and they are
+exactly the 2 arcs 4d still had to report**, 0.012 and 0.19 units. Pruning settles in one round
+with nothing behind them, the arcs that separate nothing go from 2 to **0**, and **no country
+moves at all** — net 0.000 square kilometres over 1,590 rows — because 0.2 units of line that
+enclose nothing cannot take any ground with them.
 
 A dangling node — one with a single arc end on it — makes that arc a bridge by itself, and
 there were 9 before 3a-bis. Counting them is the cheapest way in: each names an arc and a
 coordinate to look at. One of the 9 was the arc end 3d reported as unresolved, so the
 12.48-unit gap and the Kovenda and Bopedi fused face were one defect rather than two, and 3b
-closing the loop settled both.
+closing the loop settled both. The short ones are now pruned by 4d-bis below; a long one still
+reaches this report, which is the point of the bound it is pruned under.
 
 That list turns out to be the inventory behind three reports that had looked like three
 separate problems:
@@ -1446,11 +1485,13 @@ and the collapse-not-delete semantics (0e).
 2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
    all, so something between the faces and the output is inventing coordinates; the unlooping
    in 6a is the next suspect. Both figures want re-measuring after 1.
-3. **The 2 arcs that separate nothing**, down from 61. Each is a question rather than an
-   answer: two of them turned out to be the coast's fault rather than the border's, and 2c-ter
-   and 4f fixed those in the pipeline, so reading the rest as "work on the source map" — as
-   this plan did — is an assumption and not a finding. Arc 9496 at 3704.35, 2970.64 is still
-   the one with a cause already known, and it is also the unresolved arc end from 3d.
+3. **Done. No arc separates nothing**, where 61 did. This item read: each one is a question
+   rather than an answer, and reading them as "work on the source map" — as this plan did — is an
+   assumption and not a finding. That turned out to be right, and more so than the item expected:
+   every one of the 61 had a cause the pipeline could fix, and the four that accounted for the
+   last 24 were a needle that returns to a vertex, a needle that reverses without returning to
+   one, a line drawn twice and an overshoot past a crossing. The report stays, because it is
+   still how a chain that never closes announces itself.
 4. **The 109 nodes where two half-edges leave at genuinely equal angles**, where the order
    falls to `ThenBy(arc.Id)` and is arbitrary. One of them, node 633 at 2440.35, 857.64, lies
    inside Avanarsuaq's dropped face. Breaking those ties needs the arcs compared further
