@@ -129,6 +129,70 @@ public class CorrectionServiceCollapseTests
 
     [AutoCustomizedData]
     [Test]
+    public void Collapse_ShouldCutOutTheNeedle_WhenAnArcRunsOutAndBackToTheSamePoint(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The arc leaves (10, 0), runs out along a straight line, and comes back to exactly
+        // (10, 0) before carrying on. That stretch has drawn a line and not a boundary: nothing
+        // can be on one side of it, because both of its sides are the same side. Left in, 4a
+        // nodes the arc against its own other leg and the border comes out in pieces that no
+        // traversal can divide anything with, which is how Kalimantan and Daha came out as one
+        // face. The vertices are spaced differently on the way back, as they are in the source
+        // map, so this is not caught by comparing one point with the one before it.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            [(0, 0), (10, 0), (11, 0), (12, 0), (13, 0), (11.5, 0), (10, 0), (10, 10)]);
+
+        CreateService(coordinateSequenceFactory).Collapse(arcGraph, 0.25);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates()
+            .Select(coordinate => (coordinate.X, coordinate.Y))
+            .Should()
+            .Equal((0.0, 0.0), (10.0, 0.0), (10.0, 10.0));
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Collapse_ShouldKeepTheLoop_WhenAnArcComesBackToAPointAroundSomething(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The other side of that rule. An arc that returns to a point it has already visited and
+        // encloses something on the way has drawn a loop, which has an inside and an outside and
+        // is boundary like any other. Only a loop enclosing nothing goes.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            [(0, 0), (10, 0), (12, 2), (14, 0), (12, -2), (10, 0), (10, 10)]);
+
+        CreateService(coordinateSequenceFactory).Collapse(arcGraph, 0.25);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().HaveCount(7);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Collapse_ShouldDropTheRepeatedVertex_WhenAPointIsDrawnTwiceOver(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The degenerate end of the same rule: a loop of no length at all, which is one vertex
+        // written twice where the drawing stopped and started again. 16 of these on the sample
+        // map against 9 needles with real length.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (10, 0), (10, 10)]);
+
+        CreateService(coordinateSequenceFactory).Collapse(arcGraph, 0.25);
+
+        Arc arc = arcGraph.Arcs.Should().ContainSingle().Subject;
+        arc.GetFullCoordinates().Should().HaveCount(3);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Collapse_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

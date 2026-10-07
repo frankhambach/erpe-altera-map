@@ -39,6 +39,19 @@ public sealed class CorrectionService : ICorrectionService
     // only: nothing is ever welded at this distance.
     private const double ReportingRadius = 50.0;
 
+    // How much a tracer may enclose where it comes back to a coordinate it has already
+    // visited, as an area over the length of the loop, before that loop is a needle: a
+    // stretch drawn out and back along itself rather than a boundary with a side to it.
+    //
+    // Measured over the 26 such loops on this map, the two populations are nine million apart.
+    // 22 enclose exactly nothing; three come to 4.0e-10, 5.6e-10 and 7.7e-10, which is the
+    // residue of summing a shoelace along a collinear run and not an area; and one comes to
+    // 0.00758, which is a real loop - 0.19 units of border drawn as a closed speck. This figure
+    // sits at the middle of that span on a log scale, 1300x above the largest residue and 7600x
+    // below the one real loop, so it is not a line drawn through a cluster but a line drawn
+    // across an empty decade and a half.
+    private const double MaximumNeedleAreaToLengthRatio = 1E-6;
+
     private const double DegenerateLength = 1E-9;
 
     private readonly GeometryFactory geometryFactory;
@@ -63,6 +76,11 @@ public sealed class CorrectionService : ICorrectionService
     public void Collapse(ArcGraph arcGraph, double duplicateTolerance)
     {
         ArgumentNullException.ThrowIfNull(arcGraph);
+
+        // First, because a needle is a stretch an arc repeats of itself, and leaving it in makes
+        // every step after this harder: 4a nodes the arc against its own other leg and the
+        // thicket of sub-unit pieces that comes out is what no later rule can route through.
+        RemoveNeedles(arcGraph);
 
         Dictionary<Arc, double> lengths = arcGraph.Arcs.ToDictionary(arc => arc, GetLength);
         Duplicate[] duplicates = [.. FindDuplicates(arcGraph, BuildSegmentIndex(arcGraph), duplicateTolerance)];
@@ -254,6 +272,136 @@ public sealed class CorrectionService : ICorrectionService
                 ++nextIndex;
             }
         }
+    }
+
+    // A tracer that comes back to a coordinate it has already visited, enclosing nothing in
+    // between, has drawn a line and not a boundary. Nothing can be on one side of it, because
+    // both of its sides are the same side. 26 such loops on this map over 19 arcs: 16 are a
+    // vertex repeated where the drawing stopped and started again, and the other 10 are
+    // excursions of 0.64 to 1.66 units that leave a point, run out, and come back to that exact
+    // point along the way they came.
+    //
+    // The nine long ones are not thin lenses but straight lines. Every vertex of the excursion
+    // on arc 1181 lies on one line to within 9e-07, so the return leg is the outbound leg with
+    // its vertices spaced differently. That is why this needs no tolerance to speak of: the loop
+    // encloses nothing at all rather than nearly nothing.
+    //
+    // Left in, a needle does its damage through 4a. The two legs lie on top of each other, so
+    // noding cuts the arc at every vertex of the overlap, and 44 units of border between
+    // Kalimantan and Daha came out as thirteen pieces, ten of them under 0.3 units. A traversal
+    // cannot divide anything with that: it walks down the border, into the needle and back out,
+    // on to the next needle and back out, and then retraces the whole 27 units it has already
+    // walked in the other direction. One ring of 33 half-edges with both sides of the border in
+    // it, so the two countries came out as one face, with three faces of 0.000003 square units
+    // and less left over beside it.
+    //
+    // Cutting the needle out rather than splitting the arc, because there is nothing here to
+    // keep: the stretch removed is the second copy of a line the arc already carries. The arc
+    // keeps both of its nodes, since the coordinate the needle returns to is the one it left.
+    private static void RemoveNeedles(ArcGraph arcGraph)
+    {
+        Arc[] originals = [.. arcGraph.Arcs];
+        arcGraph.Arcs.Clear();
+
+        int arcs = 0;
+        int needles = 0;
+        int dropped = 0;
+        double removed = 0.0;
+        double longest = 0.0;
+        foreach (Arc arc in originals)
+        {
+            List<Coordinate> coordinates = [.. arc.GetFullCoordinates()];
+            int found = 0;
+            while (TryFindNeedle(coordinates, out int first, out int last, out double run))
+            {
+                coordinates.RemoveRange(first + 1, last - first);
+                ++found;
+                removed += run;
+                longest = Math.Max(longest, run);
+            }
+
+            if (found == 0)
+            {
+                arcGraph.Arcs.Add(arc);
+                continue;
+            }
+
+            ++arcs;
+            needles += found;
+
+            // One point left means the whole arc was the needle, and there is no line to keep.
+            if (coordinates.Count < 2)
+            {
+                ++dropped;
+                continue;
+            }
+
+            arcGraph.AddArc(
+                arc.Kind,
+                arc.StartNode,
+                arc.EndNode,
+                arcGraph.CoordinateSequenceFactory.Create([.. coordinates[1..^1]]));
+        }
+
+        if (needles == 0)
+        {
+            return;
+        }
+
+        Log.Information(
+            "Cut {Needles} needles out of {Arcs} tracer arcs, {Removed:0.00} units of line that each arc had "
+            + "already drawn once, the longest of them {Longest:0.00} units. {Dropped} arcs were nothing but a "
+            + "needle and went entirely.",
+            needles,
+            arcs,
+            removed,
+            longest,
+            dropped);
+    }
+
+    // The earliest point the coordinates come back to, with the loop it closes enclosing nothing.
+    // Earliest rather than longest, so that a needle inside a needle is taken from the inside
+    // out and the result does not depend on which was found first.
+    private static bool TryFindNeedle(
+        List<Coordinate> coordinates,
+        out int first,
+        out int last,
+        out double run)
+    {
+        Dictionary<(double X, double Y), int> seen = [];
+        for (int j = 0; j < coordinates.Count; ++j)
+        {
+            (double X, double Y) key = (coordinates[j].X, coordinates[j].Y);
+            if (seen.TryGetValue(key, out int i))
+            {
+                double area = 0.0;
+                double length = 0.0;
+                for (int k = i; k < j; ++k)
+                {
+                    area += (coordinates[k].X * coordinates[k + 1].Y)
+                        - (coordinates[k + 1].X * coordinates[k].Y);
+                    length += coordinates[k].Distance(coordinates[k + 1]);
+                }
+
+                double ratio = length < DegenerateLength
+                    ? 0.0
+                    : Math.Abs(area / 2.0) / length;
+                if (ratio <= MaximumNeedleAreaToLengthRatio)
+                {
+                    first = i;
+                    last = j;
+                    run = length;
+                    return true;
+                }
+            }
+
+            seen[key] = j;
+        }
+
+        first = 0;
+        last = 0;
+        run = 0.0;
+        return false;
     }
 
     // A tracer whose own two ends the merge welded to each other has joined nothing: it has
