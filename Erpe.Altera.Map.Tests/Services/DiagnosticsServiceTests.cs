@@ -70,7 +70,7 @@ public class DiagnosticsServiceTests
 
         try
         {
-            await new DiagnosticsService().WriteFacesAsync(arcGraph.Faces, file).ConfigureAwait(false);
+            await new DiagnosticsService().WriteFacesAsync(arcGraph.Faces, null, file).ConfigureAwait(false);
 
             XElement[] paths = GetElements(file, "path");
             paths.Should().HaveCount(arcGraph.Faces.Count);
@@ -103,7 +103,7 @@ public class DiagnosticsServiceTests
 
         try
         {
-            await new DiagnosticsService().WriteFacesAsync(arcGraph.Faces, file).ConfigureAwait(false);
+            await new DiagnosticsService().WriteFacesAsync(arcGraph.Faces, null, file).ConfigureAwait(false);
 
             GetElements(file, "path")
                 .Select(path => path.Attribute("d")?.Value.Count(character => character == 'Z'))

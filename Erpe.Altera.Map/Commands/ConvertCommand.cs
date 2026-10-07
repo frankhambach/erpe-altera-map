@@ -589,7 +589,7 @@ internal sealed class ConvertCommand : Command
             // Between the two passes, because a face inside a substate belongs to a country
             // and to a substate both and the second pass overwrites the owner with the
             // substate. This is the only point at which the faces carry the national owner.
-            await this.diagnosticsService.WriteFacesAsync(arcGraph.Faces, GetDebugFile(outFile, "-faces"))
+            await this.diagnosticsService.WriteFacesAsync(arcGraph.Faces, view, GetDebugFile(outFile, "-faces"))
                 .ConfigureAwait(false);
         }
 
@@ -600,6 +600,7 @@ internal sealed class ConvertCommand : Command
         {
             await this.diagnosticsService.WriteFacesAsync(
                     dropped.Union(substateDropped),
+                    view,
                     GetDebugFile(outFile, "-dropped"))
                 .ConfigureAwait(false);
         }

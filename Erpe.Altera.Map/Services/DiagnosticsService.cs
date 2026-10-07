@@ -74,12 +74,12 @@ public sealed class DiagnosticsService : IDiagnosticsService
         return File.WriteAllLinesAsync(file.FullName, GetArcLines([.. arcs], [.. rim], view, file));
     }
 
-    public Task WriteFacesAsync(IEnumerable<Face> faces, FileInfo file)
+    public Task WriteFacesAsync(IEnumerable<Face> faces, Envelope? view, FileInfo file)
     {
         ArgumentNullException.ThrowIfNull(faces);
         ArgumentNullException.ThrowIfNull(file);
 
-        return File.WriteAllLinesAsync(file.FullName, GetFaceLines([.. faces], file));
+        return File.WriteAllLinesAsync(file.FullName, GetFaceLines([.. faces], view, file));
     }
 
     private static string Escape(string value)
@@ -248,13 +248,24 @@ public sealed class DiagnosticsService : IDiagnosticsService
         return envelope.IsNull ? new Envelope(0.0, 1.0, 0.0, 1.0) : envelope;
     }
 
-    private static IEnumerable<string> GetFaceLines(Face[] faces, FileInfo file)
+    private static IEnumerable<string> GetFaceLines(Face[] faces, Envelope? view, FileInfo file)
     {
-        Envelope envelope = GetEnvelope(
-            faces.SelectMany(face => face.Holes.Prepend(face.Shell))
-                .SelectMany(ring => ring)
-                .SelectMany(directed => directed.Arc.GetFullCoordinates()));
-        envelope = Pad(envelope);
+        // The source document's view box when there is one, so that every file a run writes is
+        // framed the same way and they can be stacked on each other and on the input. Only
+        // without one is the extent fitted to the faces and padded.
+        //
+        // This is a trade and not a free improvement. The dropped file holds a handful of faces
+        // and often tiny ones - the two on this map are 0.2 units across - and fitted to its own
+        // contents it showed them filling the frame. Framed on the document they are specks, so
+        // what it is good for now is saying where they are rather than what they look like. The
+        // faces file loses nothing, since it covers the map anyway. Both are consistent with the
+        // arc files, which is what was wanted: four files that overlay.
+        Envelope envelope = view
+            ?? Pad(
+                GetEnvelope(
+                    faces.SelectMany(face => face.Holes.Prepend(face.Shell))
+                        .SelectMany(ring => ring)
+                        .SelectMany(directed => directed.Arc.GetFullCoordinates())));
         string stroke = Format(GetStrokeWidth(envelope));
 
         return
