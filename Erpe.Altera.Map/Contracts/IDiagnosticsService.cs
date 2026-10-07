@@ -9,11 +9,20 @@ using System.Threading.Tasks;
 
 using Erpe.Altera.Map.Models;
 
+using NetTopologySuite.Geometries;
+
 // Writes the intermediate stages of the pipeline back out as SVG, in the source map's own
 // coordinates, so that a stage can be opened next to the input it came from.
 public interface IDiagnosticsService
 {
-    Task WriteArcsAsync(IEnumerable<Arc> arcs, FileInfo file);
+    // The rim and the view box come from the source document, so that the file opens on top
+    // of the map it was read from: same coordinates, same framing, same whitespace around the
+    // rim. A null view falls back to the arcs' own extent, which is all a test has.
+    Task WriteArcsAsync(
+        IEnumerable<Arc> arcs,
+        IEnumerable<CoordinateSequence> rim,
+        Envelope? view,
+        FileInfo file);
 
     Task WriteFacesAsync(IEnumerable<Face> faces, FileInfo file);
 }

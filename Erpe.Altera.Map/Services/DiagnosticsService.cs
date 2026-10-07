@@ -44,6 +44,10 @@ public sealed class DiagnosticsService : IDiagnosticsService
 
     private const string NodeColour = "#000000";
 
+    // The projection's own frame, drawn under everything else and in a grey that stays out of
+    // the way: it is there to say where on the map you are, not to be read.
+    private const string RimColour = "#78909c";
+
     private const double NodeRadiusFactor = 1.5;
 
     private const double PaddingFactor = 10.0;
@@ -57,12 +61,17 @@ public sealed class DiagnosticsService : IDiagnosticsService
 
     private const string UnownedFaceColour = "#cfd8dc";
 
-    public Task WriteArcsAsync(IEnumerable<Arc> arcs, FileInfo file)
+    public Task WriteArcsAsync(
+        IEnumerable<Arc> arcs,
+        IEnumerable<CoordinateSequence> rim,
+        Envelope? view,
+        FileInfo file)
     {
         ArgumentNullException.ThrowIfNull(arcs);
+        ArgumentNullException.ThrowIfNull(rim);
         ArgumentNullException.ThrowIfNull(file);
 
-        return File.WriteAllLinesAsync(file.FullName, GetArcLines([.. arcs], file));
+        return File.WriteAllLinesAsync(file.FullName, GetArcLines([.. arcs], [.. rim], view, file));
     }
 
     public Task WriteFacesAsync(IEnumerable<Face> faces, FileInfo file)
@@ -88,15 +97,21 @@ public sealed class DiagnosticsService : IDiagnosticsService
         return value.ToString(CultureInfo.InvariantCulture);
     }
 
-    private static string FormatArc(Arc arc, string stroke)
+    // The colour and the width sit on the group rather than on every line, which is what makes
+    // the groups worth having: one file carries every kind and each can be turned off on its own.
+    private static string FormatArc(Arc arc)
     {
         string id = Format(arc.Id);
-        string points = string.Join(
-            " ",
-            arc.GetFullCoordinates().Select(coordinate => Format(coordinate.X) + "," + Format(coordinate.Y)));
 
         return $"<polyline id=\"arc-{id}\" data-arc-id=\"{id}\" data-kind=\"{arc.Kind}\" "
-            + $"stroke=\"{GetStroke(arc.Kind)}\" stroke-width=\"{stroke}\" points=\"{points}\" />";
+            + $"points=\"{FormatPoints(arc.GetFullCoordinates())}\" />";
+    }
+
+    private static string FormatPoints(IEnumerable<Coordinate> coordinates)
+    {
+        return string.Join(
+            " ",
+            coordinates.Select(coordinate => Format(coordinate.X) + "," + Format(coordinate.Y)));
     }
 
     private static string FormatFace(Face face)
@@ -139,17 +154,23 @@ public sealed class DiagnosticsService : IDiagnosticsService
             + " Z";
     }
 
-    private static IEnumerable<string> GetArcLines(Arc[] arcs, FileInfo file)
+    private static IEnumerable<string> GetArcLines(
+        Arc[] arcs,
+        CoordinateSequence[] rim,
+        Envelope? view,
+        FileInfo file)
     {
-        Envelope envelope = GetEnvelope(arcs.SelectMany(arc => arc.GetFullCoordinates()));
+        // The source document's view box when there is one, used exactly as it stands: that is
+        // what puts these files on the same coordinates as the map, whitespace and all. Only
+        // without one is the extent fitted to the arcs and padded.
+        Envelope envelope = view ?? Pad(GetEnvelope(arcs.SelectMany(arc => arc.GetFullCoordinates())));
         double stroke = GetStrokeWidth(envelope);
 
         return
         [
             .. GetHeaderLines(file, envelope),
-            "<g id=\"arcs\" fill=\"none\" stroke-linecap=\"round\">",
-            .. arcs.Select(arc => FormatArc(arc, Format(stroke))),
-            "</g>",
+            .. GetRimLines(rim, Format(stroke)),
+            .. GetKindLines(arcs, Format(stroke)),
 
             // The nodes are where welding decided two drawn ends were meant to be the same
             // point, so they are what makes a welded graph worth looking at rather than
@@ -161,6 +182,59 @@ public sealed class DiagnosticsService : IDiagnosticsService
             "</g>",
             "</svg>",
         ];
+    }
+
+    // One group per kind, in the order they want to be read in: the coast and the lakes are the
+    // ground, the tracers go over them, and the borders go over the substates.
+    private static List<string> GetKindLines(Arc[] arcs, string stroke)
+    {
+        (ArcKind Kind, string Group)[] kinds =
+        [
+            (ArcKind.Coast, "coast"),
+            (ArcKind.Lake, "lakes"),
+            (ArcKind.Substate, "substates"),
+            (ArcKind.Border, "borders"),
+        ];
+
+        List<string> lines = [];
+        foreach ((ArcKind kind, string group) in kinds)
+        {
+            Arc[] ofKind = [.. arcs.Where(arc => arc.Kind == kind)];
+            if (ofKind.Length == 0)
+            {
+                continue;
+            }
+
+            lines.Add(
+                $"<g id=\"{group}\" fill=\"none\" stroke=\"{GetStroke(kind)}\" stroke-width=\"{stroke}\" "
+                + "stroke-linecap=\"round\">");
+            lines.AddRange(ofKind.Select(FormatArc));
+            lines.Add("</g>");
+        }
+
+        return lines;
+    }
+
+    private static IEnumerable<string> GetRimLines(CoordinateSequence[] rim, string stroke)
+    {
+        if (rim.Length == 0)
+        {
+            return [];
+        }
+
+        return
+        [
+            $"<g id=\"rim\" fill=\"none\" stroke=\"{RimColour}\" stroke-width=\"{stroke}\">",
+            .. rim.Select(sequence => $"<polyline points=\"{FormatPoints(sequence.ToCoordinateArray())}\" />"),
+            "</g>",
+        ];
+    }
+
+    private static Envelope Pad(Envelope envelope)
+    {
+        Envelope padded = envelope.Copy();
+        padded.ExpandBy(GetStrokeWidth(envelope) * PaddingFactor);
+        return padded;
     }
 
     private static Envelope GetEnvelope(IEnumerable<Coordinate> coordinates)
@@ -180,6 +254,7 @@ public sealed class DiagnosticsService : IDiagnosticsService
             faces.SelectMany(face => face.Holes.Prepend(face.Shell))
                 .SelectMany(ring => ring)
                 .SelectMany(directed => directed.Arc.GetFullCoordinates()));
+        envelope = Pad(envelope);
         string stroke = Format(GetStrokeWidth(envelope));
 
         return
@@ -206,12 +281,10 @@ public sealed class DiagnosticsService : IDiagnosticsService
 
     private static IEnumerable<string> GetHeaderLines(FileInfo file, Envelope envelope)
     {
-        Envelope padded = envelope.Copy();
-        padded.ExpandBy(GetStrokeWidth(envelope) * PaddingFactor);
-        string x = Format(padded.MinX);
-        string y = Format(padded.MinY);
-        string width = Format(padded.Width);
-        string height = Format(padded.Height);
+        string x = Format(envelope.MinX);
+        string y = Format(envelope.MinY);
+        string width = Format(envelope.Width);
+        string height = Format(envelope.Height);
 
         return
         [

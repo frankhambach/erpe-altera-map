@@ -36,7 +36,8 @@ public class DiagnosticsServiceTests
 
         try
         {
-            await new DiagnosticsService().WriteArcsAsync(arcGraph.Arcs, file).ConfigureAwait(false);
+            await new DiagnosticsService().WriteArcsAsync(arcGraph.Arcs, [], null, file)
+                .ConfigureAwait(false);
 
             XElement[] polylines = GetElements(file, "polyline");
             polylines.Should().HaveCount(2);
@@ -118,7 +119,7 @@ public class DiagnosticsServiceTests
     [Test]
     public async Task WriteArcsAsync_ShouldThrowArgumentNullException_WhenTheArcsAreNull()
     {
-        Func<Task> action = () => new DiagnosticsService().WriteArcsAsync(null!, CreateFile());
+        Func<Task> action = () => new DiagnosticsService().WriteArcsAsync(null!, [], null, CreateFile());
 
         await action.Should().ThrowAsync<ArgumentNullException>().ConfigureAwait(false);
     }

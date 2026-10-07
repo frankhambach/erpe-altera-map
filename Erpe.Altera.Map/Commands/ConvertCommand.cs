@@ -254,6 +254,19 @@ internal sealed class ConvertCommand : Command
             + outFile.Extension);
     }
 
+    // The document's own view box, used verbatim so that a debug file lands on exactly the
+    // coordinates the source map uses and keeps the whitespace around the rim.
+    private static Envelope GetView(SvgDocument document)
+    {
+        SvgViewBox viewBox = document.ViewBox;
+
+        return new Envelope(
+            viewBox.MinX,
+            viewBox.MinX + viewBox.Width,
+            viewBox.MinY,
+            viewBox.MinY + viewBox.Height);
+    }
+
     private static async Task WriteGeoJsonAsync(IEnumerable<Country> countries, FileInfo outFile)
     {
         FeatureCollection featureCollection = new FeatureCollection();
@@ -429,6 +442,20 @@ internal sealed class ConvertCommand : Command
         return result.Copy();
     }
 
+    // Every drawn element of the rim, not only the paths: the two long curves are paths but the
+    // top and bottom edges are lines, and a frame missing its top and bottom is worse than none.
+    private CoordinateSequence[] GetRim(SvgDocument document)
+    {
+        return
+        [
+            .. document.Descendants()
+                .First(element => element.ID == "Rim")
+                .Descendants()
+                .Where(element => element is SvgPath or SvgLine or SvgRectangle or SvgPolygon)
+                .SelectMany(element => this.svgApproximationService.Approximate(element)),
+        ];
+    }
+
     private Envelope GetEnvelope(SvgDocument document)
     {
         List<Coordinate> rimPoints = document.Descendants()
@@ -511,19 +538,38 @@ internal sealed class ConvertCommand : Command
 
         this.correctionService.Weld(arcGraph, MergeTolerance, SplitTolerance);
 
+        // One file per stage rather than one per kind, and both of them framed on the source
+        // document's own view box so they open on top of the map and on each other.
+        //
+        // Two stages, because the identifiers do not survive the one in between. 4a is the first
+        // thing BuildFaces does and it splits arcs at their crossings, minting new identifiers as
+        // it goes: on this map the highest goes from 11,125 to 11,717, so every arc the reports
+        // after it name - the bridges of 4d above all - is absent from a file written before it.
+        // The five bridges 4d reports are 11204, 11271, 11273, 11395 and 11421, and not one of
+        // them could ever have been found in the file that used to be the only one written.
+        CoordinateSequence[] rim = debugSvg ? this.GetRim(document) : [];
+        Envelope? view = debugSvg ? GetView(document) : null;
         if (debugSvg)
         {
             await this.diagnosticsService.WriteArcsAsync(
-                    arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake),
-                    GetDebugFile(outFile, "-coast"))
-                .ConfigureAwait(false);
-            await this.diagnosticsService.WriteArcsAsync(
-                    arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Border or ArcKind.Substate),
-                    GetDebugFile(outFile, "-borders"))
+                    arcGraph.Arcs,
+                    rim,
+                    view,
+                    GetDebugFile(outFile, "-arcs-before"))
                 .ConfigureAwait(false);
         }
 
         this.topologyService.BuildFaces(arcGraph, enclosedArea);
+
+        if (debugSvg)
+        {
+            await this.diagnosticsService.WriteArcsAsync(
+                    arcGraph.Arcs,
+                    rim,
+                    view,
+                    GetDebugFile(outFile, "-arcs-after"))
+                .ConfigureAwait(false);
+        }
 
         // One pass per layer, because a substate shape lies inside its country's shape and
         // passing both at once would report every substate face as belonging to two
