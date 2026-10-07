@@ -196,9 +196,9 @@ public class TopologyServiceFaceTests
     {
         // A closed arc the noding grid puts entirely at its own node is a point, and a point
         // has no direction for the traversal to leave the node in. Asking for coordinates
-        // exactly equal to the node left 18 of these in the sample map. Only closed ones go:
-        // an open one would have to have its two nodes brought together instead, and merging
-        // nodes the grid rounds together was measured and breaks twelve countries.
+        // exactly equal to the node left 18 of these in the sample map. A closed one is simply
+        // dropped; an open one has its two nodes brought together first, which the test below
+        // covers.
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         Node west = arcGraph.AddNode(new Coordinate(0, 0));
         Node east = arcGraph.AddNode(new Coordinate(10, 0));
@@ -215,6 +215,61 @@ public class TopologyServiceFaceTests
         CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
 
         arcGraph.Arcs.Should().NotContain(speck).And.HaveCount(2);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldStillTraceTheFaces_WhenAnArcShorterThanTheNodingGridDanglesFromANode(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The open half of the same rule. An arc that does not reach one grid step from its own
+        // start has no length and no direction the grid can represent, and leaving it in place
+        // is not harmless: here it hangs off the node where the divider meets the coast, with
+        // nothing on its far end, so it is a bridge by itself. The traversal takes it first in
+        // the departure order, walks to the dangling node and back, and from there retraces
+        // every arc it has already walked in the other direction - one ring of zero signed area
+        // bounding nothing, and both faces lost.
+        //
+        // Contracting it is safe where merging two nodes a grid step apart is not: these two
+        // nodes are already joined by this arc, so bringing them together is an edge
+        // contraction and cannot change what is connected to what.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Substate, west, east, [(5.0, 0.0)]);
+        Node dangling = arcGraph.AddNode(new Coordinate(10.00003, 0.00002));
+        Arc stub = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, east, dangling, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().NotContain(stub).And.HaveCount(3);
+        arcGraph.Nodes.Should().NotContain(dangling);
+        arcGraph.Faces.Should().HaveCount(2);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepBothNodes_WhenAnArcIsLongerThanTheNodingGrid(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The other side of that rule, and the reason it is drawn at the grid rather than
+        // anywhere larger. An arc with a length the grid can represent is geometry, however
+        // small, and its two ends are two points. Contracting it would move a node that the
+        // drawing put somewhere else.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Node tip = arcGraph.AddNode(new Coordinate(10.01, 0.0));
+        Arc stub = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, east, tip, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0);
+
+        arcGraph.Arcs.Should().Contain(stub);
+        arcGraph.Nodes.Should().Contain(tip).And.Contain(east);
     }
 
     [AutoCustomizedData]

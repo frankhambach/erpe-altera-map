@@ -97,13 +97,18 @@ public sealed class TopologyService : ITopologyService
         // land lost to self-crossing rings from 18,816 square units to 5,699, but those five
         // are still missing. What accounted for them was a gap in the coast open to the sea
         // and, beside it, one line drawn twice.
+        (int contracted, int collapsed) = ContractDegenerateArcs(arcGraph, this.geometryFactory.PrecisionModel);
         int merged = MergeCoincidentNodes(arcGraph);
         int degenerate = RemoveDegenerateArcs(arcGraph, this.geometryFactory.PrecisionModel);
-        if ((merged > 0) || (degenerate > 0))
+        if ((contracted > 0) || (merged > 0) || (degenerate > 0))
         {
             Log.Information(
-                "Merged {Merged} nodes onto another at the same coordinate and dropped {Degenerate} closed arcs "
-                + "the noding grid puts entirely at their own node, which have no direction to be traced by.",
+                "Brought the two ends of {Contracted} open arcs shorter than the noding grid together, taking "
+                + "{Collapsed} nodes out, merged {Merged} more onto another at the same coordinate and dropped "
+                + "{Degenerate} closed arcs the grid puts entirely at their own node, which have no direction to "
+                + "be traced by.",
+                contracted,
+                collapsed,
                 merged,
                 degenerate);
         }
@@ -263,6 +268,105 @@ public sealed class TopologyService : ITopologyService
         }
     }
 
+    // An open arc that does not reach one step of the noding grid from its own start, whose two
+    // nodes are therefore brought together rather than the arc being left in place. Returns how
+    // many arcs were contracted and how many nodes that took out.
+    //
+    // This is the other half of the test below, and the reason the grid is safe to use here
+    // where it is not safe for the nodes. Merging any two nodes a grid step apart joins chains
+    // the map never joined, because two points that close together are still two points in the
+    // data. The two nodes at the two ends of one arc are not two such points: they are already
+    // connected by that arc, so bringing them together is an edge contraction, and contracting
+    // an edge cannot change what is connected to what. Only the arc's own length goes, and the
+    // grid has already said that length is below what it can represent.
+    //
+    // The arcs this reaches are made rather than drawn. 4a makes every crossing point precise
+    // and nothing else ever passes through the model, so a crossing computed where a vertex was
+    // already drawn comes out a fraction of a grid step away from it instead of on it: arc 11706
+    // joins the noded node 9560 at 2440.3538, 857.6366 to the drawn node 633 at 2440.35376,
+    // 857.636597, and is 0.00004 units long. 55 arcs on this map, 25 of them with their two
+    // nodes at exactly one coordinate, which the exact node merge below was already putting
+    // together; the other 30 are what is new here, the longest 0.000166 units.
+    //
+    // The test is metric rather than positional, which is the one place this does not mirror the
+    // closed-arc test below. Asking instead whether the grid puts every coordinate at the same
+    // point as the start node - the exact mirror - catches 53 of the 55 and misses two, because
+    // whether two points a fraction of a step apart round together depends on where in the cell
+    // they happen to fall. Measuring the distance says what was meant without that luck.
+    //
+    // A near-zero arc is what left an island shared between Avanarsuaq and Qausuittuq with no
+    // face at all. Its coast is a circuit of three arcs, 2317 units of it, with a substate
+    // border across the middle dividing the two countries, and it should trace as two faces.
+    // Instead the traversal came down the 679-unit arc into node 9560, found the 0.00004-unit
+    // stub first in the departure order, walked into node 633 - which has nothing else on it, so
+    // the stub is a bridge by itself - and straight back, and from there retraced every arc it
+    // had already walked in the other direction: one ring of ten half-edges with a signed area
+    // of exactly zero, bounding nothing, and the whole landmass inside no face. That one island
+    // was 16,851 of the 17,610 square units of land that no face covered.
+    //
+    // Seven of the contractions leave a sibling behind: another arc joined the same two nodes
+    // and is longer than a grid step, so it becomes a closed ring rather than going. All seven
+    // are tracer loops of 0.18 units or less on nodes of degree four or more, where two real
+    // arcs already meet and nothing is hidden, so they are left as they are.
+    private static (int Contracted, int Collapsed) ContractDegenerateArcs(
+        ArcGraph arcGraph,
+        PrecisionModel precisionModel)
+    {
+        double step = 1.0 / precisionModel.Scale;
+        Arc[] degenerate =
+        [
+            .. arcGraph.Arcs.Where(
+                arc => (arc.StartNode != arc.EndNode)
+                    && Array.TrueForAll(
+                        arc.GetFullCoordinates(),
+                        coordinate => coordinate.Distance(arc.StartNode.Coordinate) <= step)),
+        ];
+        if (degenerate.Length == 0)
+        {
+            return (0, 0);
+        }
+
+        // Union-find, because two such arcs can meet: contracting them one pair at a time would
+        // leave the result depending on the order they were taken in.
+        Dictionary<Node, Node> groups = new Dictionary<Node, Node>();
+        foreach (Arc arc in degenerate)
+        {
+            Node start = FindRoot(groups, arc.StartNode);
+            Node end = FindRoot(groups, arc.EndNode);
+            if (start != end)
+            {
+                groups[start.Id > end.Id ? start : end] = start.Id > end.Id ? end : start;
+            }
+        }
+
+        // The node of lowest identifier in each group survives, with its own coordinate, as it
+        // does when coincident nodes are merged below.
+        Dictionary<Node, Node> replacements = new Dictionary<Node, Node>();
+        foreach (Node node in groups.Keys)
+        {
+            Node survivor = FindRoot(groups, node);
+            if (survivor != node)
+            {
+                replacements.Add(node, survivor);
+            }
+        }
+
+        ReplaceNodes(arcGraph, replacements);
+
+        return (degenerate.Length, replacements.Count);
+    }
+
+    private static Node FindRoot(Dictionary<Node, Node> groups, Node node)
+    {
+        Node root = node;
+        while (groups.TryGetValue(root, out Node? parent))
+        {
+            root = parent;
+        }
+
+        return root;
+    }
+
     // Nodes sharing a coordinate collapse onto the one with the lowest identifier, so that
     // the same graph always collapses the same way. They arise from both ends of the
     // pipeline: noding a crossing adds a node at the rounded intersection, which may land on
@@ -287,9 +391,17 @@ public sealed class TopologyService : ITopologyService
             }
         }
 
+        ReplaceNodes(arcGraph, replacements);
+
+        return replacements.Count;
+    }
+
+    // Points every arc end at the survivor of its group and drops the nodes that went.
+    private static void ReplaceNodes(ArcGraph arcGraph, Dictionary<Node, Node> replacements)
+    {
         if (replacements.Count == 0)
         {
-            return 0;
+            return;
         }
 
         foreach (Arc arc in arcGraph.Arcs)
@@ -311,8 +423,6 @@ public sealed class TopologyService : ITopologyService
         {
             arcGraph.Nodes.Add(node);
         }
-
-        return replacements.Count;
     }
 
     // Where the noding grid would put a coordinate. What follows from two coming out the same
