@@ -216,7 +216,64 @@ this map one border arrives from the north at a node that lies 0.13 units *besid
 surviving copy without being part of it, and deleting the duplicate outright would leave
 it dangling and fuse a different pair of countries instead.
 
-Two measured thresholds:
+### 1b-bis. A tracer that repeats a stretch of *itself*
+
+**Some borders double back along themselves.** The arc leaves a coordinate, runs out, and comes
+back to that *exact* coordinate before carrying on. A stretch like that has drawn a line and not
+a boundary: nothing can be on one side of it, because both of its sides are the same side. It is
+1b's defect with one arc in place of two, so it is cut out in the same step, and **first**, since
+what makes it expensive is what 4a does with it.
+
+**26 such loops on this map over 19 arcs.** 16 are a vertex written twice where the drawing
+stopped and started again. The other 10 are excursions of 0.64 to 1.66 units — and they are not
+thin lenses but *straight lines*. Every vertex of the excursion on arc 1181 lies on one line to
+within 9e-07, so the return leg is the outbound leg with its vertices spaced differently. That is
+why it is invisible in `--debug-svg`, and why comparing each point with the one before it does not
+find it.
+
+**The damage comes through 4a.** The two legs lie on top of each other, so noding cuts the arc at
+every vertex of the overlap. 44 units of border between **Kalimantan and Daha** came out as
+thirteen pieces, ten of them under 0.3 units. The traversal walks down the border, into a needle
+and back out, on to the next needle and back out, and then retraces the whole 27 units it has
+already walked in the other direction — one ring of 33 half-edges with *both sides of the border
+in it*, so the two countries came out as one face, with three faces of 0.000003 square units and
+less left beside it.
+
+**Told apart by what the loop encloses**, as an area over its length — the hydraulic radius, for
+the fifth time in this pipeline. **`MaximumNeedleAreaToLengthRatio` = 1e-6**, and this one needed
+no judgement at all: 22 of the 26 loops enclose *exactly* nothing, three come to 4.0e-10, 5.6e-10
+and 7.7e-10 which is the residue of summing a shoelace along a collinear run rather than an area,
+and one comes to 0.00758 and is a real loop — 0.19 units of border drawn as a closed speck, which
+stays. **A gap of nine million**, and the figure sits at the middle of it on a log scale, 1300×
+above the largest residue and 7600× below the one real loop.
+
+The arc keeps both of its nodes, because the coordinate the needle returns to is the one it left.
+An arc that is nothing *but* a needle would go entirely; none is.
+
+**Measured: 25 needles out of 19 arcs, 9.61 units of line, the longest 1.66.** And the striking
+result is not the fused face:
+
+| | before | after |
+| --- | --- | --- |
+| **arcs separating nothing (4d)** | 24 | **5** |
+| faces two countries claim at once (5b) | 3 | 2 |
+| faces rejected for crossing themselves | 4 | 2 |
+| crossings noded (4a) | 213 | 173 |
+| open arcs for 4e to contract | 55 | 28 |
+| unaccounted boundary (7) | 0.417% | 0.412% |
+
+**19 of the 24 arcs that separated nothing were needle debris.** A list this plan had been reading
+as 24 separate questions was mostly one defect. The arcs 4e has to contract halve for the same
+reason: many were noding fragments of needles.
+
+Four countries move, and all four land within 0.6% of expected — Daha 2,789 → **95,971** against
+95,438, having been getting 2.9% of its territory; Kalimantan 195,536 → **102,353** against
+101,878; and a second needle nobody had reported takes Kham 271,776 → **271,850** against 271,352
+and Golok 13,869 → **13,795** against 13,759. Six others wobble by about a square kilometre from
+the line removed and the net over 1592 rows is +0.6, so this is redistribution. **The land inside
+no face does not move**, so needles were costing division and not ground.
+
+Two measured thresholds for the duplicates between *two* arcs:
 
 - **`DuplicateTolerance` = 0.25 units** (in `ConvertCommand`). Of the 131,850 units of
   tracer, 1490.8 lie within 0.01 units of another tracer and those are the duplicates. The
@@ -710,10 +767,15 @@ Two invariants. Both are now checked in the run; **one of them is failing.**
 divides no two regions from each other: the ring walks out along it and straight back, so it
 lies on no cycle. For the coast that is ordinary, since an inlet one arc wide has sea on both
 sides, but a border that separates nothing means the chain it belongs to never closes, and
-whatever it was drawn to enclose is left open to what lies outside. **24 of them on this
-map**, down from 61 as 2c, 2c-ter, 3a-bis, 3b, 4e and 4f took away the causes found so far, and
+whatever it was drawn to enclose is left open to what lies outside. **5 of them on this map**,
+down from 61 as 1b-bis, 2c, 2c-ter, 3a-bis, 3b, 4e and 4f took away the causes found so far, and
 the twenty longest are named with their coordinates so that `--debug-svg` can find them by
 `data-arc-id`.
+
+The five that remain are all 2- and 3-point arcs of 0.2 units or less, where 19 of the 24 before
+them were debris from the needles of 1b-bis. **This list was never 24 questions**; it was one
+defect wearing 19 hats, and that is the strongest argument in this plan for reading a symptom back
+to its cause rather than working down the list.
 
 A dangling node — one with a single arc end on it — makes that arc a bridge by itself, and
 there were 9 before 3a-bis. Counting them is the cheapest way in: each names an arc and a
@@ -726,7 +788,7 @@ separate problems:
 
 | symptom | what the chain did | where it shows |
 | --- | --- | --- |
-| two countries share a face | failed partway, so the region is not divided | 5b, 14 fused faces |
+| two countries share a face | failed partway, so the region is not divided | 5b, now none |
 | a country gets no ground at all | failed completely, so the region never closes | 4's area check, 0.0130% |
 | an arc end resolves to nothing | fell short of what it should meet | 3d, 1 end at 12.48 units |
 
@@ -1317,7 +1379,7 @@ and the collapse-not-delete semantics (0e).
 2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
    all, so something between the faces and the output is inventing coordinates; the unlooping
    in 6a is the next suspect. Both figures want re-measuring after 1.
-3. **The 24 arcs that separate nothing**, down from 61. Each is a question rather than an
+3. **The 5 arcs that separate nothing**, down from 61. Each is a question rather than an
    answer: two of them turned out to be the coast's fault rather than the border's, and 2c-ter
    and 4f fixed those in the pipeline, so reading the rest as "work on the source map" — as
    this plan did — is an assumption and not a finding. Arc 9496 at 3704.35, 2970.64 is still
@@ -1333,23 +1395,26 @@ and the collapse-not-delete semantics (0e).
    still has no geometry, Prabang, which is one half of the Vantong and Prabang face that 5b
    reports.
 
-   The window dump found it, as it found the six before it: take the country, dump every arc,
-   node, departure angle and ring around it, and follow the traversal step by step until it
-   turns the wrong way. Seven countries have now been read this way and gave **seven different
-   causes** - a gap in the coast open to the sea, one line drawn twice, one border copying
-   another, a stub that captured a border's end, a loop the weld would not let close, a gap fat
-   enough to be taken for a lake, and a stub that kept a vertex of its own and so escaped the
-   rule written for the stub before it. Not one of the seven was guessable from the report that
-   announced it, which remains the argument for reading the next one rather than reasoning about
-   it.
+   The window dump found it, as it found the rest: take the country, dump every arc, node,
+   departure angle and ring around it, and follow the traversal step by step until it turns the
+   wrong way. **Nine cases have now been read this way and gave nine different causes** - a gap
+   in the coast open to the sea, one line drawn twice, one border copying another, a stub that
+   captured a border's end, a loop the weld would not let close, a gap fat enough to be taken
+   for a lake, a stub that kept a vertex of its own and so escaped the rule written for the stub
+   before it, an arc the noding grid could not represent dangling off a node, and a tracer that
+   drew a stretch of itself twice. Not one of them was guessable from
+   the report that announced it, which remains the argument for reading the next one rather than
+   reasoning about it.
 
-   **Three fused faces are left, and the two around Caribbea are not the same kind of thing.**
-   Kalimantan and Daha split 0.52 to 0.48, which is the shape of every case fixed so far: one
-   region, two countries, no tracer between them. Martinique and Caribbea, and Caribbea and
-   Iouanorre, are each reported at a **full 1.00 for both** claimants. Two countries each
-   covering the whole of a face is not a division that failed; it is two shapes drawn one on top
-   of the other, and 5b already counts four such pairs. Reading Caribbea should start there and
-   not with the traversal.
+   **No faces are claimed by two countries any more**, where 33 were at the start. Kalimantan and
+   Daha were the last of the kind this plan knows how to fix - one region, two countries, no
+   tracer between them - and 1b-bis settled them. The two around Caribbea were never that kind:
+   Martinique and Caribbea, and Caribbea and Iouanorre, were each reported at a **full 1.00 for
+   both** claimants, which is not a division that failed but two shapes drawn one on top of the
+   other. Those went out of the source map on 2026-10-07, and with them the last two entries in
+   5b's report. Caribbea gains 1,989 square kilometres, the ground the duplicates had been
+   taking, and two rows leave the output; six unrelated countries move by under 0.001%, which is
+   the file having been re-saved rather than anything the pipeline did.
 8. **Done, and only half of it was right.** This item read: 22 arcs are shorter than the
    0.0001 unit noding grid and 4e does not reach them, because it asks for every coordinate to
    equal the node exactly rather than to within the grid; 18 of the 22 are closed and the other
