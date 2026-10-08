@@ -1554,6 +1554,39 @@ new export trustworthy.
    clockwise.** Their coordinates are shared either way, so it is not a sharing failure,
    but RFC 7946 asks for counter-clockwise shells and a consumer may care. It is checkable
    only on the output, and it is open.
+
+   **Settled, and the writer was the problem rather than the part that worked.** Every ring is
+   wound against the convention in memory — 6,480 of 6,481 in the national layer, the odd one out
+   enclosing no area — and that is not arbitrary at all: 4b and 6a sort rings in the *source map's*
+   coordinates, where y runs down the page, and unprojecting turns y the other way up and every
+   ring with it. The 821 quoted above was measured when 6a still unioned its faces and the overlay
+   chose the winding; it is all of them now. So all of them need turning on the way out and the
+   only question is who does it.
+
+   It was NetTopologySuite's serializer, and it got it wrong: **handed 0 clockwise shells it writes
+   3.** Orienting before it is not enough — doing only that took the file from 1 clockwise shell to
+   3 — so it is told `RingOrientationOption.DoNotModify` and the rings are turned in `Orient`,
+   where it is a shoelace and a reversal. That came out of measuring what went in against what came
+   out; reasoning about it got the answer backwards.
+
+   | national layer | before | after |
+   | --- | --- | --- |
+   | clockwise shells | 1 | **0** |
+   | counter-clockwise holes | 0 | **0** |
+   | segments two countries walk the same way | 807 | **87** |
+   | of those, with any length at all | 807 | **0** |
+
+   The 807 were almost all **Marmoria's** borders — Egypt 417, Saconia 257, Phasania 38, Agasymbia
+   8 — from its one clockwise shell of 961 points and 32.30 square degrees. The 87 left are every
+   one of them **zero length**, a duplicated point rather than a disagreement about direction. All
+   five outputs now carry 0 clockwise shells and 0 counter-clockwise holes, and no country's area
+   moves.
+
+   **The GeoJson and the topology now agree about all 1,225 countries including direction**, where
+   they agreed about 1,224. That needed the two writers to share the rule rather than each keep
+   their own: `RingExtensions.GetWinding` answers counter-clockwise, clockwise or neither, with the
+   band for "encloses nothing" in one place. Before that the topology reversed Anian's zero-area
+   ring where the GeoJson left it — the same disagreement in miniature.
 5. **Warning lists near-empty:** unresolved endpoints ≤ 12, polygonizer dangles 0,
    large faces inside two countries 0.
 
@@ -1611,12 +1644,16 @@ and the collapse-not-delete semantics (0e).
    arcs; verified by decoding them cold against the GeoJson with no geometry differences anywhere.
    Writing it also turned up the fix for item 6 below: the orientation pass it needs is the one
    the topology already does.
-6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
-   sharing failure, but RFC 7946 asks for counter-clockwise shells. **6e found both of them and
-   the fix**: writing the topology meant orienting every ring in output coordinates, and that pass
-   gets Marmoria right where the GeoJson has it clockwise. The other is Anian's zero-area spike,
-   which has no winding at all. So this is the same pass applied on the GeoJson side, and a
-   degenerate ring to decide what to do with.
+6. **Done.** Two shells reached the file wound clockwise. One was Marmoria, and turning it took
+   the segments two countries walk the same way from 807 to 87 — all 87 of them zero length. The
+   other was Anian's zero-area spike, which has no winding to get right and is left alone. The
+   fix is in 7's item 4 above: the serializer is told not to reorient and `Orient` does it, since
+   handed 0 clockwise shells the serializer wrote 3.
+
+   **What is left of it is the degenerate rings**, which want dropping rather than orienting:
+   Anian's shell of 17 points, Namaquab's hole, and Macau's shell at the coarsest tolerance all
+   enclose nothing. Those are the spikes 7 reports beside the 5 segments a single country uses
+   twice, and they are one job rather than this one.
 7. **Done. Every country has geometry**, where fifteen had none. This item read: one country
    still has no geometry, Prabang, which is one half of the Vantong and Prabang face that 5b
    reports.
