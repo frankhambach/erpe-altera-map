@@ -1281,9 +1281,56 @@ Still to do:
   first place to look. Epsumba's face is fifteen points at a single coordinate and
   Thelemark's unloops into eleven lobes, which suggests more than one defect among the four.
   They are written out on their own by `--debug-svg`, below.
-- **6d is done: see below.**
-- **6e, TopoJSON.** The sharing it needs is measured in Phase 7 item 4, with a residue
-  attached: it holds for 260,643 segments of boundary and not for about 11,785.
+- **6d is done: see below. 6e is done: see below.**
+
+**6e. The partition is written as a topology as well.** This is what the arc graph was built
+for — the goal at the top of this plan is that TopoJSON should *fall out of the representation
+rather than having to be recovered from it* — and that is what it does. An arc exists once, the
+two countries either side of it refer to the same one by index, and nothing is deduced by
+comparing coordinates.
+
+**One file per detail level, not one per layer.** Both layers go into each as objects,
+`countries` and `substates`, over one set of arcs, because that is the thing the format is for: a
+national border is also the edge of a substate, and here it is one arc with two references rather
+than the same line written twice. It is also why `out.json` carries segments used three times and
+the topology does not.
+
+| | GeoJson | topology |
+| --- | --- | --- |
+| full | `out.json` 28.6 MB | `out.topojson` **16.4 MB** |
+| medium | `out-medium.json` 5.6 MB | `out-medium.topojson` **3.7 MB** |
+| low | `out-low.json` 2.3 MB | `out-low.topojson` **1.8 MB** |
+
+**9,978 arcs, 3,897 of them referred to more than once.** Quantized at a millionth of a degree,
+which is the six decimals 6c writes, so the two files carry the same numbers and a consumer
+turning one into the other gets the other. Positions are delta-encoded under a `transform`, as the
+specification requires of a quantized topology.
+
+**Simplification costs nothing extra**, which is 6d's doing. Which vertices go was already decided
+once per arc, so a coarse topology is *the same rings over shorter arcs*: no reference changes, and
+the two sides of a border stay the same line.
+
+**Carrying the rings this far needed one change to 6a's unlooping**: it cuts at a repeated *node*
+now rather than at a repeated coordinate, so that each lobe is still a run of whole arcs and can be
+named as one. The two agree here, and the measurement is why that is trusted rather than assumed:
+**3 of the 7,244 dissolved rings need cutting and all 3 pinch at a node**, which is what 4a
+guarantees for a crossing and 1b-bis for a tracer touching itself. A pinch inside an arc would be
+missed, and the polygon it made would then fail 6a's validity check and be reported rather than
+quietly written. The GeoJson is byte-identical after the change.
+
+**Verified by decoding the files cold** — undoing the transform and the deltas, reassembling rings
+from arc indices — and comparing against the GeoJson of the same data. **Zero geometry differences
+in every layer of every file.** In the national layer of the full topology 1,224 of 1,225 countries
+are identical *including direction*, and the one that is not is **Marmoria, where the topology is
+the correct one**: its shell is the single clockwise exterior ring in the GeoJson, which is the RFC
+7946 nit this plan records below.
+
+**The specification says nothing about winding**, so this follows the GeoJson beside it —
+counter-clockwise shells, clockwise holes. The trap worth recording is that 4b and 6a sort rings in
+the *source map's* coordinates, where y runs down the page: unprojecting turns y the other way up
+and every ring with it, so the winding has to be taken again in output coordinates rather than
+carried over. The one ring left wound against its role is Anian's zero-area spike, which has no
+winding to get right.
 
 ## Intermediate output for inspection — `--debug-svg`
 
@@ -1559,9 +1606,17 @@ and the collapse-not-delete semantics (0e).
    falls to `ThenBy(arc.Id)` and is arbitrary. One of them, node 633 at 2440.35, 857.64, lies
    inside Avanarsuaq's dropped face. Breaking those ties needs the arcs compared further
    along than their first vertex.
-5. **6e, TopoJSON**, which wants 1 and ideally 2 done first.
+5. **Done.** 6e, TopoJSON, which wanted 1 and ideally 2 done first and got both. Three files
+   beside the GeoJson, one per detail level, each carrying both layers as objects over one set of
+   arcs; verified by decoding them cold against the GeoJson with no geometry differences anywhere.
+   Writing it also turned up the fix for item 6 below: the orientation pass it needs is the one
+   the topology already does.
 6. **Two shells reach the file wound clockwise** where the writer puts the rest right. Not a
-   sharing failure, but RFC 7946 asks for counter-clockwise shells.
+   sharing failure, but RFC 7946 asks for counter-clockwise shells. **6e found both of them and
+   the fix**: writing the topology meant orienting every ring in output coordinates, and that pass
+   gets Marmoria right where the GeoJson has it clockwise. The other is Anian's zero-area spike,
+   which has no winding at all. So this is the same pass applied on the GeoJson side, and a
+   degenerate ring to decide what to do with.
 7. **Done. Every country has geometry**, where fifteen had none. This item read: one country
    still has no geometry, Prabang, which is one half of the Vantong and Prabang face that 5b
    reports.
