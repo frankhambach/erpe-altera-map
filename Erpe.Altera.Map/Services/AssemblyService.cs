@@ -108,20 +108,6 @@ public sealed class AssemblyService : IAssemblyService
         return [.. dropped];
     }
 
-    // The same shoelace 4b sorts its rings by, rather than a library's idea of winding, so that
-    // ground and hole mean here exactly what they mean there.
-    private static double GetSignedArea(LinearRing ring)
-    {
-        Coordinate[] coordinates = ring.Coordinates;
-        double area = 0.0;
-        for (int i = 0; i < (coordinates.Length - 1); ++i)
-        {
-            area += (coordinates[i].X * coordinates[i + 1].Y) - (coordinates[i + 1].X * coordinates[i].Y);
-        }
-
-        return area / 2.0;
-    }
-
     // Cuts a ring of arcs wherever it comes back to a node it has already been through, which is
     // where the region is pinched to a point or a hole touches its outside. That is one ring in
     // the graph but it crosses itself as geometry, and NetTopologySuite rejects it.
@@ -183,7 +169,7 @@ public sealed class AssemblyService : IAssemblyService
                     continue;
                 }
 
-                if (GetSignedArea(closed) > 0.0)
+                if (closed.Coordinates.GetSignedArea() > 0.0)
                 {
                     shells.Add((closed, lobe));
                 }

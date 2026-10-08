@@ -94,7 +94,14 @@ internal sealed class ConvertCommand : Command
             NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
             Converters =
                 {
-                    new GeoJsonConverterFactory(),
+                    // DoNotModify, because Orient below has already turned the rings and this
+                    // would turn some of them back. Its default is to enforce RFC 7946 itself,
+                    // and handed 0 clockwise shells it writes 3 of them - Marmoria, Chukcha and
+                    // one of Anian's - so orienting before it is not enough on its own.
+                    new GeoJsonConverterFactory(
+                        false,
+                        GeoJsonConverterFactory.DefaultIdPropertyName,
+                        RingOrientationOption.DoNotModify),
                 },
         };
 
@@ -248,6 +255,45 @@ internal sealed class ConvertCommand : Command
             + ".svg");
     }
 
+    // RFC 7946 asks for counter-clockwise shells and clockwise holes, and in memory every ring is
+    // wound the other way: 6480 of 6481 in the national layer, the odd one out being a ring of no
+    // area. Not a defect, and not arbitrary either - 4b and 6a sort rings in the source map's
+    // coordinates, where y runs down the page, and unprojecting turns y the other way up and every
+    // ring with it. So something has to turn them all back on the way out.
+    //
+    // It used to be the serializer and the serializer got it wrong. It is told DoNotModify above,
+    // because handed 0 clockwise shells it still writes 3, and the turning is done here instead
+    // where it is a shoelace and a reversal rather than a question of what it makes of an awkward
+    // ring.
+    //
+    // Measured over the national layer: one shell reached the file clockwise before this,
+    // Marmoria, 961 points and 32.30 square degrees, and its borders are what made 807 segments
+    // look as though two countries walked them the same way round. Both are 0 now, and of the 87
+    // same-direction segments left every one is of zero length.
+    //
+    // A ring of no area is left alone, because there is nothing to turn: Anian's shell of 17
+    // points and Namaquab's hole enclose nothing, and reversing either changes no coordinate.
+    // They are the degenerate spikes 7 reports, and a different thing to fix.
+    private static Polygon Orient(Polygon polygon)
+    {
+        return polygon.Factory.CreatePolygon(
+            Orient(polygon.Shell, false),
+            [.. polygon.Holes.Select(hole => Orient(hole, true))]);
+    }
+
+    private static LinearRing Orient(LinearRing ring, bool isHole)
+    {
+        int winding = ring.Coordinates.GetWinding();
+        if ((winding == 0) || ((winding > 0) != isHole))
+        {
+            return ring;
+        }
+
+        // The same coordinate objects in the other order. Both sides of a border share those
+        // objects, which is what 6b set up, and turning a ring must not touch them.
+        return ring.Factory.CreateLinearRing([.. ring.Coordinates.Reverse()]);
+    }
+
     // Beside the GeoJson and named after it, with the extension consumers expect.
     private static FileInfo GetTopoJsonFile(FileInfo outFile, string suffix)
     {
@@ -291,7 +337,8 @@ internal sealed class ConvertCommand : Command
             Feature feature = new Feature
                 {
                     Attributes = new AttributesTable(),
-                    Geometry = new MultiPolygon(country.Shapes.Select(shape => shape.Polygon).ToArray()),
+                    Geometry = new MultiPolygon(
+                        [.. country.Shapes.Select(shape => Orient(shape.Polygon))]),
                 };
             feature.Geometry.Apply(new RoundCoordinateSequenceFilter());
 

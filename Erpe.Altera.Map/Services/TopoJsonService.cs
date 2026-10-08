@@ -132,22 +132,6 @@ public sealed class TopoJsonService : ITopoJsonService
         return [.. coordinates];
     }
 
-    // The shoelace over the ring as it will be written. Taken here rather than carried over from
-    // the dissolve, because the dissolve sorted its rings in the source map's coordinates where y
-    // runs down the page: unprojecting turns y the other way up and every ring with it.
-    private static double GetSignedArea(Coordinate[] coordinates)
-    {
-        double area = 0.0;
-        for (int i = 0; i < coordinates.Length; ++i)
-        {
-            Coordinate current = coordinates[i];
-            Coordinate next = coordinates[(i + 1) % coordinates.Length];
-            area += (current.X * next.Y) - (next.X * current.Y);
-        }
-
-        return area / 2.0;
-    }
-
     // The specification asks nothing about which way a ring is wound, so this follows the GeoJson
     // beside it: RFC 7946's counter-clockwise shells and clockwise holes. A consumer turning the
     // topology back into features then gets what the other file already says.
@@ -156,8 +140,11 @@ public sealed class TopoJsonService : ITopoJsonService
         IReadOnlyDictionary<Arc, Coordinate[]> arcs,
         bool isHole)
     {
-        double area = GetSignedArea(GetCoordinates(ring, arcs));
-        if ((area > 0.0) != isHole)
+        // Over the ring as it will be written, not as the dissolve sorted it: that was done in the
+        // source map's coordinates, where y runs down the page. A ring enclosing nothing is left
+        // as it is, so that this and the GeoJson writer agree about it.
+        int winding = GetCoordinates(ring, arcs).GetWinding();
+        if ((winding == 0) || ((winding > 0) != isHole))
         {
             return ring;
         }
