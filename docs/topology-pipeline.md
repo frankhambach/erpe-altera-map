@@ -1329,8 +1329,9 @@ the correct one**: its shell is the single clockwise exterior ring in the GeoJso
 counter-clockwise shells, clockwise holes. The trap worth recording is that 4b and 6a sort rings in
 the *source map's* coordinates, where y runs down the page: unprojecting turns y the other way up
 and every ring with it, so the winding has to be taken again in output coordinates rather than
-carried over. The one ring left wound against its role is Anian's zero-area spike, which has no
-winding to get right.
+carried over. The one ring that was left wound against its role is Anian's zero-area spike, which
+has no winding to get right and is no longer written at all: it is an islet drawn outside the rim,
+and 7's item 4 has it.
 
 ## Intermediate output for inspection — `--debug-svg`
 
@@ -1587,6 +1588,63 @@ new export trustworthy.
    their own: `RingExtensions.GetWinding` answers counter-clockwise, clockwise or neither, with the
    band for "encloses nothing" in one place. Before that the topology reversed Anian's zero-area
    ring where the GeoJson left it — the same disagreement in miniature.
+
+   **The rings that answer "neither" are now dropped rather than written**, which is what the
+   paragraph above left open. There are three of them and they have three unrelated causes:
+
+   | ring | what it is |
+   | --- | --- |
+   | Anian-37's shell | an islet drawn **outside the rim**, 1.2 to 5.2 units past it |
+   | Namaquab-0's hole 1 | a closed lake arc of three points enclosing 1.3e-7 square units |
+   | Macau-0's shell, at 0.01 | simplification thinning a four-point shell to a there and back |
+
+   **Anian's is the one worth knowing about, because the pipeline is what flattens it.** The
+   islet covers 4.15 square units in the source map and sits at x 5576.8 to 5578.8 where the
+   drawn rim at that y is at 5575.6 — and the rim is drawn exactly where the projection puts
+   the antimeridian, which is itself worth having measured. So every one of its sixteen
+   longitudes comes out past 180, `CreateCoordinate` clamps each to 180, and a small island
+   arrives as a line 0.11 degrees long. 431 of the map's 1,166,937 distinct coordinates clamp
+   that way; this is the only ring all of whose points do. **It is a drawing error in the source
+   map rather than anything this code can repair**, and the remedy is to move the islet inside
+   the rim or delete it.
+
+   The decision is `Round(ring).GetWinding() == 0`, and it is **the coordinates as written** that
+   it asks about, not as held: the writers round to six decimals as they go and a ring can lose
+   the last of its area there. The turn in `Orient` still reads the held coordinates, and
+   measurement says it cannot disagree - the smallest ring that survives this is Bruni's
+   triangle of 8.5e-8 square degrees, whose perimeter admits 1.0e-9 of rounding slack, 82 times
+   less than its own area.
+
+   It happens in `Filter`, the method simplification already went through, because that method
+   was already deciding the other way a ring can fail to be writable - too few vertices left to
+   close - and the two belong together. Two things followed from putting them there:
+
+   - **`Shape.Rings` has to be filtered beside `Polygon`**, one ring for one ring, or the
+     topology writes a ring the GeoJson dropped. The old code passed `Rings` through untouched,
+     which was a latent disagreement: no hole had yet been dropped by the vertex count, so it
+     had never shown.
+   - **A country with no ring left is now left out of the GeoJson** instead of written with an
+     empty geometry, because that is what the topology already did with it. At 0.01 that is
+     Gibraltar, whose shell is already thinned past closing and which was an empty feature in
+     the file before this.
+
+   | | before | after |
+   | --- | --- | --- |
+   | rings enclosing nothing, over the five outputs | 9 occurrences of 3 rings | **0** |
+   | segments one country uses twice, substate layer | 2 | **1** |
+   | segments used three times or more, at 0.01 | 1 | **0** |
+   | countries written with an empty geometry | 1 | **0** |
+   | countries whose area moves | — | **0** |
+   | the run | 105 s | 105 s |
+
+   The triple-use error was the same ring seen from the neighbour's side: Macau's collapsed shell
+   walked its one segment twice and Kanton walked it once, which makes three. That report goes
+   with the ring. What is left of the sharing check's spikes is **not** degenerate rings and
+   wants saying plainly: two needles inside otherwise sound shells, at Nunangats 0.0001 degrees
+   long and Chernorus 0.0017, and one pair of Nunangats shapes that touch along a segment 0.006
+   degrees long and should probably be one shape. Those are coordinates inside real rings, so
+   removing them would have to happen arc by arc or it would break the sharing it is meant to
+   tidy.
 5. **Warning lists near-empty:** unresolved endpoints ≤ 12, polygonizer dangles 0,
    large faces inside two countries 0.
 
@@ -1650,10 +1708,12 @@ and the collapse-not-delete semantics (0e).
    fix is in 7's item 4 above: the serializer is told not to reorient and `Orient` does it, since
    handed 0 clockwise shells the serializer wrote 3.
 
-   **What is left of it is the degenerate rings**, which want dropping rather than orienting:
-   Anian's shell of 17 points, Namaquab's hole, and Macau's shell at the coarsest tolerance all
-   enclose nothing. Those are the spikes 7 reports beside the 5 segments a single country uses
-   twice, and they are one job rather than this one.
+   **The degenerate rings are done too**, and they wanted dropping rather than orienting, as this
+   item guessed, and they are the three it named: Anian's shell of 17 points, Namaquab's hole and
+   Macau's shell at the coarsest tolerance. The write-up is in 7's item 4 above, along with the
+   one finding that is not housekeeping: Anian's is an islet drawn outside the rim, which the
+   unprojection's clamp at 180 flattens onto the antimeridian, and no code here can give it
+   back.
 7. **Done. Every country has geometry**, where fifteen had none. This item read: one country
    still has no geometry, Prabang, which is one half of the Vantong and Prabang face that 5b
    reports.
