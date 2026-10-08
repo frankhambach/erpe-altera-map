@@ -194,6 +194,45 @@ public sealed class TopologyService : ITopologyService
         }
     }
 
+    // Dissolving a set of faces by walking their arcs rather than by unioning their geometry.
+    // 6a used to hand the faces to UnaryUnionNG, which is a general overlay: it re-nodes
+    // everything it is given, and where it decides two edges are not quite the same it writes a
+    // new one. Measured over the finished output, the boundary it follows exactly is 267,758
+    // segments and the boundary it does not is 5,565 - and removing the dissolve outright takes
+    // that 5,565 to 2, so the overlay is not one cause among several, it is the whole of what is
+    // left. Walking the arcs cannot have that failure mode, because it never computes a
+    // coordinate: an arc either bounds the set or it does not, and the ones that do are strung
+    // together as they are.
+    //
+    // An arc is interior when the faces either side of it are both in the set, and those drop
+    // out in pairs. What is left is every half-edge whose other side lies outside, which is the
+    // boundary, and it is chained by the same rule 4b traces faces with - the next way out of a
+    // node, clockwise from the way back - except that a half-edge the set swallowed is stepped
+    // over rather than taken. That is what makes the walk hug the outside of the set instead of
+    // turning into it at the first internal border.
+    public IReadOnlyList<IReadOnlyList<DirectedArc[]>> DissolveFaces(
+        ArcGraph arcGraph,
+        IReadOnlyList<IReadOnlyCollection<Face>> sets)
+    {
+        ArgumentNullException.ThrowIfNull(arcGraph);
+        ArgumentNullException.ThrowIfNull(sets);
+
+        // Once for every set between them. The order the half-edges leave a node in is a property
+        // of the graph, and rebuilding it per set made this phase four times as slow as the union
+        // it replaced - 44 seconds against 10 on the national layer.
+        Dictionary<Node, DirectedArc[]> outgoing = BuildOutgoing(arcGraph);
+        Dictionary<DirectedArc, int> positions = [];
+        foreach ((Node _, DirectedArc[] arcs) in outgoing)
+        {
+            for (int i = 0; i < arcs.Length; ++i)
+            {
+                positions[arcs[i]] = i;
+            }
+        }
+
+        return [.. sets.Select(faces => DissolveOneSet(faces, outgoing, positions))];
+    }
+
     public LinearRing Close(CoordinateSequence coordinateSequence)
     {
         ArgumentNullException.ThrowIfNull(coordinateSequence);
@@ -301,6 +340,92 @@ public sealed class TopologyService : ITopologyService
                 ++pruned;
             }
         }
+    }
+
+    // The next half-edge of the boundary out of the node this one ends at. Clockwise from the way
+    // back, as in 4b, and over the node's whole fan rather than the boundary's share of it, so
+    // that an arc the set swallowed is stepped over in its proper place in the order instead of
+    // being left out of the order altogether.
+    private static DirectedArc? GetNextOnBoundary(
+        DirectedArc current,
+        HashSet<DirectedArc> boundary,
+        Dictionary<Node, DirectedArc[]> outgoing,
+        Dictionary<DirectedArc, int> positions)
+    {
+        DirectedArc back = new DirectedArc(current.Arc, !current.IsReversed);
+        DirectedArc[] candidates = outgoing[GetEndNode(current)];
+        for (int step = 1; step <= candidates.Length; ++step)
+        {
+            int index = (((positions[back] - step) % candidates.Length) + candidates.Length)
+                % candidates.Length;
+            DirectedArc candidate = candidates[index];
+            if (boundary.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static List<DirectedArc[]> DissolveOneSet(
+        IReadOnlyCollection<Face> faces,
+        Dictionary<Node, DirectedArc[]> outgoing,
+        Dictionary<DirectedArc, int> positions)
+    {
+        HashSet<DirectedArc> inside = [];
+        foreach (Face face in faces)
+        {
+            foreach (DirectedArc directed in face.Holes.Prepend(face.Shell).SelectMany(ring => ring))
+            {
+                inside.Add(directed);
+            }
+        }
+
+        HashSet<DirectedArc> boundary =
+        [
+            .. inside.Where(directed => !inside.Contains(new DirectedArc(directed.Arc, !directed.IsReversed))),
+        ];
+
+        List<DirectedArc[]> rings = [];
+        HashSet<DirectedArc> walked = [];
+        foreach (DirectedArc start in boundary.OrderBy(directed => directed.Arc.Id)
+                     .ThenBy(directed => directed.IsReversed))
+        {
+            if (!walked.Add(start))
+            {
+                continue;
+            }
+
+            List<DirectedArc> ring = [start];
+            DirectedArc current = start;
+            while (true)
+            {
+                DirectedArc? next = GetNextOnBoundary(current, boundary, outgoing, positions);
+                if ((next == null) || (next.Value == start))
+                {
+                    break;
+                }
+
+                if (!walked.Add(next.Value))
+                {
+                    // Every half-edge of the boundary lies on exactly one of its rings, so
+                    // reaching one already spoken for means the walk is wrong, not finished.
+                    Log.Warning(
+                        "Dissolving reached an already walked half-edge on arc {ArcId}; the shape around it "
+                        + "will be incomplete.",
+                        next.Value.Arc.Id);
+                    break;
+                }
+
+                ring.Add(next.Value);
+                current = next.Value;
+            }
+
+            rings.Add([.. ring]);
+        }
+
+        return rings;
     }
 
     private static void ReportBridges(List<(DirectedArc[] Ring, double SignedArea)> rings)

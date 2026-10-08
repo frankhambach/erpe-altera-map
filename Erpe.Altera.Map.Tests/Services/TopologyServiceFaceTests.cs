@@ -4,6 +4,7 @@
 namespace Erpe.Altera.Map.Tests.Services;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 using Erpe.Altera.Map.Models;
@@ -407,6 +408,98 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void DissolveFaces_ShouldDropTheBorderBetweenThem_WhenBothFacesAreGiven(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The whole point of walking the arcs instead of unioning the geometry. The divider has
+        // one of the two faces on each side, so both of its half-edges are inside the set and it
+        // drops out; the four coast arcs have the set on one side only and are kept. Nothing is
+        // recomputed, so the ring is made of the arcs' own coordinates.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Arc divider = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, [(5.0, 0.0)]);
+        TopologyService service = CreateService(coordinateSequenceFactory);
+        service.BuildFaces(arcGraph, 0.0, 0.0);
+        arcGraph.Faces.Should().HaveCount(2, "the divider cuts the ring in two");
+
+        DirectedArc[][] rings = [.. service.DissolveFaces(arcGraph, [[.. arcGraph.Faces]])[0]];
+
+        DirectedArc[] ring = rings.Should().ContainSingle().Subject;
+        ring.Should().NotContain(directed => directed.Arc == divider);
+        ring.Select(directed => directed.Arc.Kind).Should().AllBeEquivalentTo(ArcKind.Coast);
+        ring.Should().HaveCount(2, "the two coast arcs are the whole of the outside");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void DissolveFaces_ShouldKeepTheBorder_WhenOnlyOneOfTheTwoFacesIsGiven(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The other side of the same rule: with one face in the set the divider has the set on one
+        // side and somebody else on the other, so it is boundary and stays. That is what keeps a
+        // border between two countries in both of their outlines.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Arc divider = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Border, west, east, [(5.0, 0.0)]);
+        TopologyService service = CreateService(coordinateSequenceFactory);
+        service.BuildFaces(arcGraph, 0.0, 0.0);
+
+        DirectedArc[][] rings = [.. service.DissolveFaces(arcGraph, [[arcGraph.Faces[0]]])[0]];
+
+        DirectedArc[] ring = rings.Should().ContainSingle().Subject;
+        ring.Should().HaveCount(2).And.Contain(directed => directed.Arc == divider);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void DissolveFaces_ShouldWindTheHoleAgainstTheGround_WhenAFaceCarriesOne(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Two rings out of one face, and the signs are what tells the caller which is which: the
+        // outside comes back with a positive signed area and the hole with a negative one, the
+        // same way round 4b sorts shells from outlines.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Coast,
+            [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Lake,
+            [(10, 10), (20, 10), (20, 20), (10, 20), (10, 10)]);
+        TopologyService service = CreateService(coordinateSequenceFactory);
+        service.BuildFaces(arcGraph, 0.0, 0.0);
+        Face island = arcGraph.Faces.Single(face => face.Holes.Length == 1);
+
+        DirectedArc[][] rings = [.. service.DissolveFaces(arcGraph, [[island]])[0]];
+
+        rings.Should().HaveCount(2);
+        rings.Select(GetSignedArea).Should().ContainSingle(area => area > 0.0).And.HaveCount(2);
+        rings.Select(GetSignedArea).Should().ContainSingle(area => area < 0.0);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void DissolveFaces_ShouldThrowArgumentNullException_WhenTheFacesAreNull(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+
+        Action action = () => CreateService(coordinateSequenceFactory).DissolveFaces(arcGraph, null!);
+
+        action.Should().Throw<ArgumentNullException>();
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldThrowArgumentNullException_WhenArcGraphIsNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
@@ -441,6 +534,20 @@ public class TopologyServiceFaceTests
     {
         return coordinateSequenceFactory.Create(
             points.Select(point => new Coordinate(point.X, point.Y)).ToArray());
+    }
+
+    private static double GetSignedArea(IEnumerable<DirectedArc> ring)
+    {
+        List<Coordinate> coordinates = ring.GetCoordinates();
+        double area = 0.0;
+        for (int i = 0; i < coordinates.Count; ++i)
+        {
+            Coordinate current = coordinates[i];
+            Coordinate next = coordinates[(i + 1) % coordinates.Count];
+            area += (current.X * next.Y) - (next.X * current.Y);
+        }
+
+        return area / 2.0;
     }
 
     private static ArcGraph CreateGraph(CoordinateSequenceFactory coordinateSequenceFactory)

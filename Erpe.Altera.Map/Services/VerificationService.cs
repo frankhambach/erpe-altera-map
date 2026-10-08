@@ -17,18 +17,22 @@ using Serilog;
 public sealed class VerificationService : IVerificationService
 {
     // What share of the boundary may have only one side to it before this is a break rather
-    // than a residue. It is not zero, and that is an open question rather than a design: on
-    // this map 11,785 segments of boundary, 0.878% of it, are neither coast nor lake shore
-    // nor the edge of a face left out in 6a, and where they come from is not yet known. The
-    // share rises to 4.882% in the coarsest output, not because simplification breaks
-    // anything - the count falls to 4,889 - but because simplification takes away the
-    // paired boundary much faster than the unpaired.
+    // than a residue.
     //
-    // So this is set to catch a break and not the residue: twice the worst figure a sound
-    // run produces, against the better part of the boundary that a real break produces -
-    // thinning every ring on its own, which is what per-polygon simplification does, loses
-    // three quarters of all sharing.
-    private const double MaximumUnpairedShare = 0.10;
+    // This was 10% for as long as the residue was unexplained, which it no longer is. It stood
+    // at 11,785 segments, 0.878% of the boundary, and the cause was the union 6a used to dissolve
+    // a country's faces: a general overlay re-nodes what it is given and writes a new edge
+    // wherever it decides two are not quite the same. Walking the arcs instead took that residue
+    // to 5 segments, 0.000%, and the coarse outputs from 1.632% and 3.684% to 0.002% and 0.004%.
+    //
+    // So the figure can now be what it was always meant to be. 0.1% is 25 times the worst a
+    // sound run produces and 340 times less than a real break: thinning every ring on its own,
+    // which is what per-polygon simplification does, leaves 34% of the boundary unpaired.
+    //
+    // The 5 that remain are two places, and neither is a sharing failure. Agurania carries 2
+    // segments over 0.029 degrees, and Bruni 3 that make a triangle of no area with sides under
+    // a milli-degree. They are the output's six decimals showing, not a border with one side.
+    private const double MaximumUnpairedShare = 0.001;
 
     public SharingReport VerifySharing(IEnumerable<Country> countries, IEnumerable<Coordinate[]>? coastLines)
     {

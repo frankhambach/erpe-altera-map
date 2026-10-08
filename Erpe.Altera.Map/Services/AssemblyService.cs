@@ -11,7 +11,6 @@ using Erpe.Altera.Map.Contracts;
 using Erpe.Altera.Map.Models;
 
 using NetTopologySuite.Geometries;
-using NetTopologySuite.Operation.OverlayNG;
 
 using Serilog;
 
@@ -19,11 +18,15 @@ public sealed class AssemblyService : IAssemblyService
 {
     private readonly GeometryFactory geometryFactory;
 
-    public AssemblyService(GeometryFactory geometryFactory)
+    private readonly ITopologyService topologyService;
+
+    public AssemblyService(GeometryFactory geometryFactory, ITopologyService topologyService)
     {
         ArgumentNullException.ThrowIfNull(geometryFactory);
+        ArgumentNullException.ThrowIfNull(topologyService);
 
         this.geometryFactory = geometryFactory;
+        this.topologyService = topologyService;
     }
 
     // Replaces each country's drawn shapes with the faces it was assigned. The faces are
@@ -34,59 +37,52 @@ public sealed class AssemblyService : IAssemblyService
         ArgumentNullException.ThrowIfNull(arcGraph);
         ArgumentNullException.ThrowIfNull(countries);
 
-        Dictionary<Country, List<Polygon>> byOwner = [];
-        List<Face> dropped = [];
-        double droppedArea = 0.0;
+        Dictionary<Country, List<Face>> byOwner = [];
         foreach (Face face in arcGraph.Faces.Where(face => face.Owner != null))
         {
-            bool isDropped = false;
-            foreach (Polygon polygon in this.CreatePolygons(face))
+            if (!byOwner.TryGetValue(face.Owner!, out List<Face>? owned))
             {
-                if (polygon.IsEmpty)
-                {
-                    continue;
-                }
-
-                if (!polygon.IsValid)
-                {
-                    isDropped = true;
-                    droppedArea += Math.Abs(polygon.Area);
-                    continue;
-                }
-
-                if (!byOwner.TryGetValue(face.Owner!, out List<Polygon>? polygons))
-                {
-                    polygons = [];
-                    byOwner.Add(face.Owner!, polygons);
-                }
-
-                polygons.Add(polygon);
+                owned = [];
+                byOwner.Add(face.Owner!, owned);
             }
 
-            if (isDropped)
-            {
-                dropped.Add(face);
-            }
+            owned.Add(face);
         }
 
+        // A country holds several faces wherever a substate border cuts through it, so the faces
+        // are dissolved back together - by walking the arcs that bound them rather than by
+        // unioning their geometry. The arcs that divide one of its own faces from another drop
+        // out, and what is left is strung into rings of the arcs' own coordinates. Nothing is
+        // recomputed, so a border cannot come out different from the one the neighbour on the far
+        // side is built from.
+        //
+        // Every country in one call, because the walk shares one index over the whole graph.
+        Country[] owners = [.. countries];
+        IReadOnlyList<IReadOnlyList<DirectedArc[]>> dissolved = this.topologyService.DissolveFaces(
+            arcGraph,
+            [.. owners.Select(country => byOwner.TryGetValue(country, out List<Face>? owned) ? owned : [])]);
+
+        // Which faces were lost can no longer be pinned on one of them: a country's boundary is
+        // now walked as a whole, so an invalid lobe belongs to the region and not to a face of it.
+        // What the caller needs this for is the allowance in 7 for boundary with one side to it,
+        // and giving it the whole country's faces keeps that allowance conservative. Nothing on
+        // this map reaches it - no country's boundary comes out invalid.
+        HashSet<Face> dropped = [];
+        double droppedArea = 0.0;
         int assembled = 0;
-        foreach (Country country in countries)
+        for (int i = 0; i < owners.Length; ++i)
         {
+            Country country = owners[i];
             country.Shapes.Clear();
-            if (!byOwner.TryGetValue(country, out List<Polygon>? polygons))
+            Polygon[] polygons = [.. this.CreatePolygons(dissolved[i])];
+            foreach (Polygon polygon in polygons.Where(polygon => !polygon.IsEmpty && !polygon.IsValid))
             {
-                continue;
+                droppedArea += Math.Abs(polygon.Area);
+                dropped.UnionWith(byOwner[country]);
             }
 
-            // A country holds several faces wherever a substate border cuts through it, so
-            // the faces have to be dissolved back together. Unioning geometry that already
-            // shares its edges exactly follows those edges rather than recomputing them, so
-            // the borders with the neighbours come through untouched.
-            foreach ((Polygon polygon, int index) in ExtractPolygons(
-                             UnaryUnionNG.Union(
-                                 polygons.ToArray(),
-                                 this.geometryFactory,
-                                 this.geometryFactory.PrecisionModel))
+            foreach ((Polygon polygon, int index) in polygons
+                         .Where(polygon => !polygon.IsEmpty && polygon.IsValid)
                          .Select((polygon, index) => (polygon, index)))
             {
                 country.Shapes.Add(new Shape($"{country.Id}-{index}", polygon));
@@ -95,51 +91,73 @@ public sealed class AssemblyService : IAssemblyService
         }
 
         Log.Information(
-            "Assembled {Shapes} shapes for {Countries} countries from the faces.",
+            "Assembled {Shapes} shapes for {Countries} countries by walking the arcs that bound their faces.",
             assembled,
             byOwner.Count);
 
         if (dropped.Count > 0)
         {
             Log.Warning(
-                "{Dropped} faces trace to a ring that crosses itself, covering {Area:0.0} square units, and were "
-                + "left out.",
+                "{Dropped} faces belong to a boundary that crosses itself, covering {Area:0.0} square units, and "
+                + "were left out.",
                 dropped.Count,
                 droppedArea);
         }
 
-        return dropped;
+        return [.. dropped];
     }
 
-    private static IEnumerable<Polygon> ExtractPolygons(Geometry geometry)
+    // The same shoelace 4b sorts its rings by, rather than a library's idea of winding, so that
+    // ground and hole mean here exactly what they mean there.
+    private static double GetSignedArea(LinearRing ring)
     {
-        return geometry switch
-            {
-                GeometryCollection geometryCollection => geometryCollection.OfType<Polygon>(),
-                Polygon polygon => [polygon],
-                _ => [],
-            };
+        Coordinate[] coordinates = ring.Coordinates;
+        double area = 0.0;
+        for (int i = 0; i < (coordinates.Length - 1); ++i)
+        {
+            area += (coordinates[i].X * coordinates[i + 1].Y) - (coordinates[i + 1].X * coordinates[i].Y);
+        }
+
+        return area / 2.0;
     }
 
-    // A face boundary may come back to a node it has already been through, where the face is
-    // pinched to a point or a hole touches its shell. That is one ring in the graph but it
+    // A dissolved boundary may come back to a node it has already been through, where the region
+    // is pinched to a point or a hole touches its outside. That is one ring in the graph but it
     // crosses itself as geometry, which NetTopologySuite rejects, so it is cut at every such
     // point into the separate lobes it is really made of.
-    private IEnumerable<Polygon> CreatePolygons(Face face)
+    //
+    // Which rings are ground and which are holes in it comes from the walk: a ring of positive
+    // signed area encloses ground, a negative one a hole. Unlooping can turn one ring into
+    // several, so the sign is taken from each lobe rather than from the ring it came out of.
+    private IEnumerable<Polygon> CreatePolygons(IReadOnlyList<DirectedArc[]> rings)
     {
-        LinearRing[] shells = [.. this.Unloop(face.Shell.GetCoordinates())];
-        if (shells.Length == 0)
+        List<LinearRing> shells = [];
+        List<LinearRing> holes = [];
+        foreach (DirectedArc[] ring in rings)
+        {
+            foreach (LinearRing lobe in this.Unloop(ring.GetCoordinates()))
+            {
+                if (GetSignedArea(lobe) > 0.0)
+                {
+                    shells.Add(lobe);
+                }
+                else
+                {
+                    holes.Add(lobe);
+                }
+            }
+        }
+
+        if (shells.Count == 0)
         {
             return [];
         }
 
-        LinearRing[] holes = [.. face.Holes.SelectMany(hole => this.Unloop(hole.GetCoordinates()))];
-
-        // With one lobe every hole belongs to it. With several, each hole goes to the lobe
-        // that encloses it.
-        if (shells.Length == 1)
+        // With one shell every hole belongs to it. With several, each hole goes to the smallest
+        // shell that encloses it.
+        if (shells.Count == 1)
         {
-            return [this.geometryFactory.CreatePolygon(shells[0], holes)];
+            return [this.geometryFactory.CreatePolygon(shells[0], [.. holes])];
         }
 
         Polygon[] lobes = [.. shells.Select(shell => this.geometryFactory.CreatePolygon(shell))];
