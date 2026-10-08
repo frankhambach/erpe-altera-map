@@ -74,18 +74,19 @@ public sealed class AssemblyService : IAssemblyService
         {
             Country country = owners[i];
             country.Shapes.Clear();
-            Polygon[] polygons = [.. this.CreatePolygons(dissolved[i])];
-            foreach (Polygon polygon in polygons.Where(polygon => !polygon.IsEmpty && !polygon.IsValid))
+            (Polygon Polygon, DirectedArc[][] Rings)[] shapes = [.. this.CreateShapes(dissolved[i])];
+            foreach ((Polygon polygon, DirectedArc[][] _) in shapes.Where(
+                         shape => !shape.Polygon.IsEmpty && !shape.Polygon.IsValid))
             {
                 droppedArea += Math.Abs(polygon.Area);
                 dropped.UnionWith(byOwner[country]);
             }
 
-            foreach ((Polygon polygon, int index) in polygons
-                         .Where(polygon => !polygon.IsEmpty && polygon.IsValid)
-                         .Select((polygon, index) => (polygon, index)))
+            foreach (((Polygon polygon, DirectedArc[][] rings), int index) in shapes
+                         .Where(shape => !shape.Polygon.IsEmpty && shape.Polygon.IsValid)
+                         .Select((shape, index) => (shape, index)))
             {
-                country.Shapes.Add(new Shape($"{country.Id}-{index}", polygon));
+                country.Shapes.Add(new Shape($"{country.Id}-{index}", polygon, rings));
                 ++assembled;
             }
         }
@@ -121,29 +122,74 @@ public sealed class AssemblyService : IAssemblyService
         return area / 2.0;
     }
 
-    // A dissolved boundary may come back to a node it has already been through, where the region
-    // is pinched to a point or a hole touches its outside. That is one ring in the graph but it
-    // crosses itself as geometry, which NetTopologySuite rejects, so it is cut at every such
-    // point into the separate lobes it is really made of.
+    // Cuts a ring of arcs wherever it comes back to a node it has already been through, which is
+    // where the region is pinched to a point or a hole touches its outside. That is one ring in
+    // the graph but it crosses itself as geometry, and NetTopologySuite rejects it.
+    //
+    // Cut by node rather than by coordinate, which is what this used to do, so that each lobe is
+    // still a run of whole arcs and can be written out as one. The two are the same thing here:
+    // 3 of the 7,244 dissolved rings on this map need cutting and all 3 pinch at a node, which is
+    // what 4a guarantees for a crossing and 1b-bis for a tracer touching itself. A pinch
+    // somewhere inside an arc would be missed, and the polygon it makes would then fail the
+    // validity check below and be reported rather than quietly written.
+    private static List<DirectedArc[]> UnloopArcs(DirectedArc[] ring)
+    {
+        List<DirectedArc[]> loops = [];
+        List<DirectedArc> current = [];
+        Dictionary<Node, int> seen = [];
+        foreach (DirectedArc directed in ring)
+        {
+            if (seen.TryGetValue(directed.StartNode, out int start))
+            {
+                loops.Add([.. current.GetRange(start, current.Count - start)]);
+                for (int i = start; i < current.Count; ++i)
+                {
+                    seen.Remove(current[i].StartNode);
+                }
+
+                current.RemoveRange(start, current.Count - start);
+            }
+
+            seen[directed.StartNode] = current.Count;
+            current.Add(directed);
+        }
+
+        if (current.Count > 0)
+        {
+            loops.Add([.. current]);
+        }
+
+        return loops;
+    }
+
+    // Each shape as both the geometry and the arcs it is made of, so that the one can be written
+    // as GeoJson and the other as a topology without either being recovered from the other.
     //
     // Which rings are ground and which are holes in it comes from the walk: a ring of positive
-    // signed area encloses ground, a negative one a hole. Unlooping can turn one ring into
-    // several, so the sign is taken from each lobe rather than from the ring it came out of.
-    private IEnumerable<Polygon> CreatePolygons(IReadOnlyList<DirectedArc[]> rings)
+    // signed area encloses ground, a negative one a hole. Cutting can turn one ring into several,
+    // so the sign is taken from each lobe rather than from the ring it came out of.
+    private IEnumerable<(Polygon Polygon, DirectedArc[][] Rings)> CreateShapes(
+        IReadOnlyList<DirectedArc[]> rings)
     {
-        List<LinearRing> shells = [];
-        List<LinearRing> holes = [];
+        List<(LinearRing Ring, DirectedArc[] Arcs)> shells = [];
+        List<(LinearRing Ring, DirectedArc[] Arcs)> holes = [];
         foreach (DirectedArc[] ring in rings)
         {
-            foreach (LinearRing lobe in this.Unloop(ring.GetCoordinates()))
+            foreach (DirectedArc[] lobe in UnloopArcs(ring))
             {
-                if (GetSignedArea(lobe) > 0.0)
+                LinearRing? closed = this.CreateRing(lobe.GetCoordinates());
+                if (closed == null)
                 {
-                    shells.Add(lobe);
+                    continue;
+                }
+
+                if (GetSignedArea(closed) > 0.0)
+                {
+                    shells.Add((closed, lobe));
                 }
                 else
                 {
-                    holes.Add(lobe);
+                    holes.Add((closed, lobe));
                 }
             }
         }
@@ -154,71 +200,39 @@ public sealed class AssemblyService : IAssemblyService
         }
 
         // With one shell every hole belongs to it. With several, each hole goes to the smallest
-        // shell that encloses it.
+        // shell that encloses it, and one no shell encloses is left out, exactly as before.
+        List<(LinearRing Ring, DirectedArc[] Arcs)>[] byLobe = [.. shells.Select(_ =>
+            new List<(LinearRing Ring, DirectedArc[] Arcs)>())];
         if (shells.Count == 1)
         {
-            return [this.geometryFactory.CreatePolygon(shells[0], [.. holes])];
+            byLobe[0].AddRange(holes);
         }
-
-        Polygon[] lobes = [.. shells.Select(shell => this.geometryFactory.CreatePolygon(shell))];
-        List<LinearRing>[] byLobe = [.. lobes.Select(_ => new List<LinearRing>())];
-        foreach (LinearRing hole in holes)
+        else
         {
-            int best = -1;
-            for (int i = 0; i < lobes.Length; ++i)
+            Polygon[] lobes = [.. shells.Select(shell => this.geometryFactory.CreatePolygon(shell.Ring))];
+            foreach ((LinearRing hole, DirectedArc[] arcs) in holes)
             {
-                if (lobes[i].Contains(this.geometryFactory.CreatePoint(hole.GetCoordinateN(0)))
-                    && ((best < 0) || (lobes[i].Area < lobes[best].Area)))
+                int best = -1;
+                for (int i = 0; i < lobes.Length; ++i)
                 {
-                    best = i;
-                }
-            }
-
-            if (best >= 0)
-            {
-                byLobe[best].Add(hole);
-            }
-        }
-
-        return shells.Select((shell, i) => this.geometryFactory.CreatePolygon(shell, [.. byLobe[i]]));
-    }
-
-    // Splits a closed path wherever it returns to a point it has already visited, which is
-    // the same unlooping the drawn shapes get.
-    private List<LinearRing> Unloop(List<Coordinate> path)
-    {
-        List<LinearRing> rings = [];
-        List<Coordinate> current = [];
-        Dictionary<Coordinate, int> seen = [];
-        foreach (Coordinate coordinate in path)
-        {
-            if (seen.TryGetValue(coordinate, out int start))
-            {
-                LinearRing? ring = this.CreateRing(current.GetRange(start, current.Count - start));
-                if (ring != null)
-                {
-                    rings.Add(ring);
+                    if (lobes[i].Contains(this.geometryFactory.CreatePoint(hole.GetCoordinateN(0)))
+                        && ((best < 0) || (lobes[i].Area < lobes[best].Area)))
+                    {
+                        best = i;
+                    }
                 }
 
-                for (int i = start; i < current.Count; ++i)
+                if (best >= 0)
                 {
-                    seen.Remove(current[i]);
+                    byLobe[best].Add((hole, arcs));
                 }
-
-                current.RemoveRange(start, current.Count - start);
             }
-
-            seen[coordinate] = current.Count;
-            current.Add(coordinate);
         }
 
-        LinearRing? remainder = this.CreateRing(current);
-        if (remainder != null)
-        {
-            rings.Add(remainder);
-        }
-
-        return rings;
+        return shells.Select(
+            (shell, i) => (
+                this.geometryFactory.CreatePolygon(shell.Ring, [.. byLobe[i].Select(hole => hole.Ring)]),
+                (DirectedArc[][])[shell.Arcs, .. byLobe[i].Select(hole => hole.Arcs)]));
     }
 
     private LinearRing? CreateRing(List<Coordinate> coordinates)

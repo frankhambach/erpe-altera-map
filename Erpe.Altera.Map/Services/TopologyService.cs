@@ -899,12 +899,12 @@ public sealed class TopologyService : ITopologyService
 
     private static Node GetStartNode(DirectedArc directed)
     {
-        return directed.IsReversed ? directed.Arc.EndNode : directed.Arc.StartNode;
+        return directed.StartNode;
     }
 
     private static Node GetEndNode(DirectedArc directed)
     {
-        return directed.IsReversed ? directed.Arc.StartNode : directed.Arc.EndNode;
+        return directed.EndNode;
     }
 
     private static double GetSignedArea(IEnumerable<DirectedArc> ring)

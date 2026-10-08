@@ -120,6 +120,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly ITracerService tracerService;
 
+    private readonly ITopoJsonService topoJsonService;
+
     private readonly IVerificationService verificationService;
 
     public ConvertCommand(
@@ -133,6 +135,7 @@ internal sealed class ConvertCommand : Command
         IFaceAssignmentService faceAssignmentService,
         ISimplificationService simplificationService,
         IDiagnosticsService diagnosticsService,
+        ITopoJsonService topoJsonService,
         IVerificationService verificationService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
@@ -147,6 +150,7 @@ internal sealed class ConvertCommand : Command
         this.faceAssignmentService = faceAssignmentService;
         this.simplificationService = simplificationService;
         this.diagnosticsService = diagnosticsService;
+        this.topoJsonService = topoJsonService;
         this.verificationService = verificationService;
         this.geometryFactory = geometryFactory;
 
@@ -242,6 +246,17 @@ internal sealed class ConvertCommand : Command
             + Path.GetFileNameWithoutExtension(outFile.Name)
             + suffix
             + ".svg");
+    }
+
+    // Beside the GeoJson and named after it, with the extension consumers expect.
+    private static FileInfo GetTopoJsonFile(FileInfo outFile, string suffix)
+    {
+        return new FileInfo(
+            outFile.DirectoryName
+            + Path.DirectorySeparatorChar
+            + Path.GetFileNameWithoutExtension(outFile.Name)
+            + suffix
+            + ".topojson");
     }
 
     private static FileInfo GetOutFile(FileInfo outFile, string suffix = "-no-substates")
@@ -359,7 +374,8 @@ internal sealed class ConvertCommand : Command
                 country => new Country(
                     country.Id,
                     country.Type,
-                    country.Shapes.Select(shape => new Shape(shape.Id, this.Filter(shape.Polygon, removed)))
+                    country.Shapes
+                        .Select(shape => new Shape(shape.Id, this.Filter(shape.Polygon, removed), shape.Rings))
                         .Where(shape => !shape.Polygon.IsEmpty))),
         ];
     }
@@ -637,6 +653,17 @@ internal sealed class ConvertCommand : Command
         await WriteGeoJsonAsync(national, GetOutFile(outFile, "-no-substates")).ConfigureAwait(false);
         await WriteGeoJsonAsync(substates, GetOutFile(outFile, "-only-substates")).ConfigureAwait(false);
 
+        // One topology rather than the three files the GeoJson needs, because the two layers go
+        // into it as two objects over one set of arcs. That is the whole point of the format: a
+        // national border is also the edge of a substate, and here it is one arc with two
+        // references instead of the same line written twice. It is also why out.json carries
+        // segments used three times and this does not.
+        await this.topoJsonService.WriteAsync(
+                [("countries", national), ("substates", substates)],
+                arcs,
+                GetTopoJsonFile(outFile, string.Empty))
+            .ConfigureAwait(false);
+
         // The coarse outputs are simplified by arc and not by polygon: which vertices go is
         // decided once for each arc, and then those coordinates are dropped wherever they
         // appear. Simplifying each polygon on its own, as this did before, gives the two
@@ -665,6 +692,22 @@ internal sealed class ConvertCommand : Command
                 CountRings(national));
             this.verificationService.VerifySharing(simplified, GetOneSided(arcs, removed, droppedNational));
             await WriteGeoJsonAsync(this.Filter(written, removed), GetOutFile(outFile, output.Suffix))
+                .ConfigureAwait(false);
+
+            // The same rings over shorter arcs. Which vertices went was decided once per arc, so
+            // dropping them from the arcs is the whole of simplifying the topology: no reference
+            // changes and the two sides of a border stay the same line.
+            await this.topoJsonService.WriteAsync(
+                    [
+                        ("countries", this.Filter(national, removed)),
+                        ("substates", this.Filter(substates, removed)),
+                    ],
+                    arcs.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value
+                            .Where(coordinate => !removed.Contains((coordinate.X, coordinate.Y)))
+                            .ToArray()),
+                    GetTopoJsonFile(outFile, output.Suffix))
                 .ConfigureAwait(false);
         }
     }
