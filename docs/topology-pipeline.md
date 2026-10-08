@@ -1159,10 +1159,46 @@ neighbour is also unclaimed or water.
 shapes it was drawn with. From here on a border exists once and both countries either
 side of it are built from the same arc coordinates.
 
-A country holds several faces wherever a substate border cuts through it, so the faces
-are dissolved back together. Unioning geometry that already shares its edges exactly
-follows those edges rather than recomputing them, so the borders with the neighbours come
-through untouched.
+A country holds several faces wherever a substate border cuts through it, so the faces are
+dissolved back together — **by walking the arcs that bound them, not by unioning their
+geometry**.
+
+This used to hand the faces to `UnaryUnionNG` on the grounds that unioning geometry which
+already shares its edges exactly follows those edges rather than recomputing them. **That was an
+assumption, it was tested in 7's item 4, and it was wrong.** A general overlay re-nodes
+everything it is given and writes a new edge wherever it decides two are not quite the same.
+Emitting each face as its own polygon, so that no multi-face union happens, takes the
+unaccounted boundary from **5,567 segments to 2** — the overlay was not one cause among several,
+it was the whole of what was left.
+
+The walk is the one 4b uses, restricted. A half-edge whose other side belongs to the same
+country is **interior** and drops out in pairs; what remains is the boundary, chained by the next
+way out of a node, clockwise from the way back — except that a half-edge the country swallowed is
+**stepped over** rather than taken. That is what makes the walk hug the outside of the region
+instead of turning into it at the first internal border. Nothing is recomputed, because no
+coordinate is ever calculated: an arc either bounds the country or it does not, and the ones that
+do are strung together as they are.
+
+| | union | arc walk |
+| --- | --- | --- |
+| shapes assembled | 6,122 and 719 | **6,122 and 719** |
+| shared exactly | 267,760 | **270,536** |
+| unaccounted, national | 5,567 (0.410%) | **5 (0.000%)** |
+| unaccounted, `-medium` | 4,254 (1.632%) | **4 (0.002%)** |
+| unaccounted, `-low` | 3,711 (3.684%) | **4 (0.004%)** |
+| national assembly | 10 s | **1 s** |
+
+205 of 1,590 countries move and **none by as much as a square kilometre** — the largest is
+Pathania by 0.444 on 63,906 — with a net of −0.207 over the lot. That is the overlay's edge
+rewrites being undone. **The coarse outputs are now exactly shared too**, which this plan said
+could not happen until 6d; 6d was already in, and the union was the only thing breaking them.
+
+Two things the implementation got wrong first, both worth keeping. The orientation test used
+NetTopologySuite's winding rather than the shoelace 4b sorts rings by, which called every
+country's outer ring a hole and gave 325 shapes instead of 6,122. And the angular order of the
+half-edges at every node was rebuilt once per country — 2,802 passes over 10,000 arcs — which
+made the walk four times slower than the union it replaced; built once for every set between
+them, the same output takes 1 second instead of 44.
 
 **Face boundaries have to be unlooped first.** A face boundary may return to a node it has
 already passed through, where the face is pinched to a point or a hole touches its shell.
@@ -1361,6 +1397,13 @@ new export trustworthy.
    than following it, which is the assumption this item set out to test; it holds for
    260,643 segments and not for about 11,785.
 
+   **That guess was right, and it was the whole of it rather than a part.** The control the
+   paragraph above calls for - emit each face as its own polygon, so that no multi-face union
+   happens - takes the residue to **2 segments**. 6a now walks the arcs instead, and the check
+   reads **5 unaccounted, 0.000%**, with the coarse outputs at 0.002% and 0.004%. The figures in
+   this item are left as they were measured, since the reasoning that got to them stands; the
+   current ones are in the table at its end.
+
    **Two of the three checks turned out to be no evidence at all**, which a control showed
    and reasoning alone did not. Thinning every ring independently - keeping every other
    vertex, which is the failure per-polygon simplification causes - destroys 74% of the
@@ -1401,6 +1444,11 @@ new export trustworthy.
    a national border is also a substate edge. `out-low.json` and `out-medium.json` are not
    shared and cannot be until 6d.
 
+   That last sentence is no longer true, and it was wrong about the cause rather than about the
+   fact. 6d - simplification deciding once per arc - was already in when it was written; what kept
+   the coarse outputs from being shared was the union, the same as everything else here. They now
+   read 0.002% and 0.004% unaccounted.
+
    **It now runs in the pipeline**, as `IVerificationService`, once for each layer that
    gets written, between unprojecting and writing: rounding to the output decimals happens
    as the file is written and can only bring two coordinates together, never separate them,
@@ -1422,17 +1470,28 @@ new export trustworthy.
    | coast and lake segments in the graph | 821,825 | not comparable |
    | one-sided and not coast, lake or a dropped face | **11,785** | |
 
-   `MaximumUnpairedShare` is 10%, set to catch a break rather than the residue above: twice
-   the worst figure a sound run produces, against the three quarters of all sharing that the
-   thinned control loses. It is deliberately loose, and it should be tightened the moment the
-   11,785 are understood.
+   (Those were the figures when the union was still running. They now read 5 and 4; the table is
+   kept as measured because the reasoning around it refers to these numbers.)
 
-   **Measured again after 2c-ter and 4f**, which recovered seven countries between them, the
-   same check reads 265,436 shared and **6,892 unaccounted — 0.513% of the boundary, down
-   from 0.887%**. The figures above are left as they were measured, since the reasoning that
-   got to them stands; where this plan quotes 11,785 as the size of the residue, 6,892 is the
-   current one. The two coarse outputs moved the same way, 2.425% to 2.024% and 4.954% to
-   4.538%.
+   `MaximumUnpairedShare` **was** 10%, set to catch a break rather than the residue above, and
+   deliberately loose because the residue was not understood. It is now **0.1%**: 25x the worst a
+   sound run produces and 340x less than a real break, where thinning every ring on its own
+   leaves 34% of the boundary unpaired.
+
+   **Measured again twice since.** After 2c-ter and 4f, which recovered seven countries between
+   them, the same check read 265,436 shared and 6,892 unaccounted — 0.513%, down from 0.887%, with
+   the coarse outputs at 2.024% and 4.538%. After 6a stopped unioning:
+
+   | | national | `-medium` | `-low` |
+   | --- | --- | --- | --- |
+   | segments | 1,358,890 | 258,395 | 98,176 |
+   | shared exactly | 270,536 | 52,108 | 17,913 |
+   | **unaccounted** | **5 (0.000%)** | **4 (0.002%)** | **4 (0.004%)** |
+
+   The 5 are two places and neither is a sharing failure: **Agurania** with 2 segments over 0.029
+   degrees and **Bruni** with 3 that make a triangle of no area, sides under a milli-degree. Both
+   are the output's six decimals showing. The figures earlier in this item are left as they were
+   measured; these are the current ones.
 
    **The in-run check and the check over the file disagree about one thing, and both are
    right.** Over the file, 102 segments - all of them between Chukcha and Nauka - come up
@@ -1476,15 +1535,19 @@ and the collapse-not-delete semantics (0e).
 
 ## What is left, in the order worth doing it
 
-1. **Dissolve a country by walking its arcs** rather than by unioning its faces. Phase 7
-   item 4 measures the union as following the edges it is given for the great majority of the
-   boundary and not for a residue now standing at 6,892 segments, and skipping the union
-   outright took that residue from 11,556 to 4,614 when it was measured - about 60% of it
-   removed by construction rather than by measurement. It is also the alternative this plan
-   named at the outset.
-2. **Whatever that leaves.** When last measured 3,535 of the residue existed in no arc at
-   all, so something between the faces and the output is inventing coordinates; the unlooping
-   in 6a is the next suspect. Both figures want re-measuring after 1.
+1. **Done, and it was worth more than this item thought.** Dissolve a country by walking its
+   arcs rather than by unioning its faces: the item estimated about 60% of the residue removed
+   by construction, from a measurement taken before several of the fixes above. Measured again
+   with the control it asked for, the union accounted for **5,565 of the 5,567** — all of it. The
+   walk is now 6a and the unaccounted boundary reads **5 segments, 0.000%**.
+2. **Done with it.** This item read: 3,535 of the residue existed in no arc at all, so something
+   between the faces and the output is inventing coordinates, and the unlooping in 6a is the next
+   suspect. The unlooping was innocent; the inventing was the overlay, which no longer runs. What
+   is left is 5 segments in two places, neither of them a sharing failure — Agurania with 2 over
+   0.029 degrees and Bruni with 3 making a triangle of no area, sides under a milli-degree. They
+   are the output's six decimals showing, and `MaximumUnpairedShare` has come down from 10% to
+   **0.1%** accordingly, which is 25x the worst a sound run produces and 340x less than a real
+   break.
 3. **Done. No arc separates nothing**, where 61 did. This item read: each one is a question
    rather than an answer, and reading them as "work on the source map" — as this plan did — is an
    assumption and not a finding. That turned out to be right, and more so than the item expected:
