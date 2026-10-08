@@ -42,6 +42,28 @@ public class RingExtensionsTests
     }
 
     [Test]
+    public void GetWinding_ShouldReturnNeither_WhenEveryPointOfTheRingIsOnOneMeridian()
+    {
+        // Anian has an islet drawn beyond the rim, and every longitude past 180 is clamped onto
+        // the antimeridian, so all seventeen of its points arrive with the same x. It wanders in
+        // latitude and comes back, which no spike out and straight back does, and it still
+        // encloses nothing: the whole of it is one line.
+        Coordinate[] ring = Ring(
+            [(180, 50.9186), (180, 50.9091), (180, 50.8995), (180, 50.9061), (180, 51.0105), (180, 50.9302)]);
+
+        ring.GetWinding().Should().Be(0);
+    }
+
+    [Test]
+    public void GetWinding_ShouldReturnNeither_WhenARingRepeatsAPointAndThenGoesBack()
+    {
+        // What simplification leaves of Macau at the coarsest tolerance: two corners, one of them
+        // written twice, and the way back along the line it came. The repeat makes it four points
+        // rather than three, and it is still a line.
+        Ring([(113.5402, 22.0608), (113.6677, 22.2345), (113.6677, 22.2345)]).GetWinding().Should().Be(0);
+    }
+
+    [Test]
     public void GetWinding_ShouldNotDependOnWhereTheRingStarts()
     {
         Coordinate[] ring = Ring([(0, 0), (10, 0), (10, 10), (0, 10)]);

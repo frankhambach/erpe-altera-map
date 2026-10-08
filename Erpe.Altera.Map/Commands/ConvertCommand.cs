@@ -294,6 +294,21 @@ internal sealed class ConvertCommand : Command
         return ring.Factory.CreateLinearRing([.. ring.Coordinates.Reverse()]);
     }
 
+    // A ring as the file will carry it rather than as it is held. Both writers round to six
+    // decimals on the way out, and a ring thin enough loses the last of its area in that
+    // rounding, so this is the only version of it worth asking which way round it runs.
+    private static Coordinate[] Round(LinearRing ring)
+    {
+        return
+        [
+            .. ring.CoordinateSequence.ToCoordinateArray()
+                .Select(
+                    coordinate => new Coordinate(
+                        Math.Round(coordinate.X, OutputDecimals),
+                        Math.Round(coordinate.Y, OutputDecimals))),
+        ];
+    }
+
     // Beside the GeoJson and named after it, with the extension consumers expect.
     private static FileInfo GetTopoJsonFile(FileInfo outFile, string suffix)
     {
@@ -413,29 +428,105 @@ internal sealed class ConvertCommand : Command
         return removed;
     }
 
-    private Country[] Filter(IEnumerable<Country> countries, HashSet<(double X, double Y)> removed)
+    // The countries with those coordinates taken out of them, and with whatever that leaves
+    // unwritable left out as well. Two things can stop a ring being writable and both are
+    // decided here, in one place, so that the GeoJson, the topology and the sharing check are
+    // handed the same rings and cannot disagree about which exist.
+    private Country[] Filter(IEnumerable<Country> countries, HashSet<(double X, double Y)> removed, string layer)
     {
-        return
-        [
-            .. countries.Select(
-                country => new Country(
-                    country.Id,
-                    country.Type,
-                    country.Shapes
-                        .Select(shape => new Shape(shape.Id, this.Filter(shape.Polygon, removed), shape.Rings))
-                        .Where(shape => !shape.Polygon.IsEmpty))),
-        ];
+        List<string> degenerate = [];
+        List<string> lost = [];
+        List<Country> filtered = [];
+        foreach (Country country in countries)
+        {
+            List<Shape> shapes = [];
+            foreach (Shape shape in country.Shapes)
+            {
+                Shape? kept = this.Filter(shape, removed, degenerate);
+                if (kept != null)
+                {
+                    shapes.Add(kept);
+                }
+            }
+
+            if (shapes.Count == 0)
+            {
+                lost.Add(country.Id);
+                continue;
+            }
+
+            filtered.Add(new Country(country.Id, country.Type, shapes));
+        }
+
+        if (degenerate.Count > 0)
+        {
+            Log.Information(
+                "Left {Rings} of {Layer}'s rings out because they enclose nothing in the coordinates they are "
+                + "written in: {Which}.",
+                degenerate.Count,
+                layer,
+                string.Join(", ", degenerate));
+        }
+
+        if (lost.Count > 0)
+        {
+            Log.Information(
+                "{Countries} of {Layer}'s countries have no ring left to stand for them and are left out of it "
+                + "rather than written with an empty geometry: {Which}.",
+                lost.Count,
+                layer,
+                string.Join(", ", lost));
+        }
+
+        return [.. filtered];
     }
 
-    private Polygon Filter(Polygon polygon, HashSet<(double X, double Y)> removed)
+    // The shell and then the holes, each carrying the arcs it is made of beside it, because
+    // Shape.Rings matches Polygon's rings one for one and that pairing is what lets the topology
+    // write the same rings as the GeoJson. A ring dropped from one of them has to go from the
+    // other, and a shape whose shell goes takes its holes with it.
+    private Shape? Filter(Shape shape, HashSet<(double X, double Y)> removed, List<string> degenerate)
     {
-        LinearRing? shell = this.Filter(polygon.Shell, removed);
+        LinearRing[] rings = [shape.Polygon.Shell, .. shape.Polygon.Holes];
+        List<LinearRing> kept = [];
+        List<DirectedArc[]> arcs = [];
+        for (int index = 0; index < rings.Length; ++index)
+        {
+            LinearRing? ring = this.Filter(rings[index], removed);
 
-        return shell == null
-            ? this.geometryFactory.CreatePolygon()
-            : this.geometryFactory.CreatePolygon(
-                shell,
-                [.. polygon.Holes.Select(hole => this.Filter(hole, removed)).OfType<LinearRing>()]);
+            // A ring with no inside is not a ring. A consumer asked to fill it has nothing to
+            // fill, it runs its own line twice over, and which way round it goes says nothing.
+            // Three things on this map leave one: an islet drawn beyond the rim, whose every
+            // longitude past 180 is clamped onto the antimeridian; a lake of 1.3e-7 square
+            // units, which is a line by the time it is rounded; and simplification thinning a
+            // shell down to a single there and back.
+            if ((ring != null) && (Round(ring).GetWinding() == 0))
+            {
+                string role = index == 0
+                    ? "shell"
+                    : string.Create(CultureInfo.InvariantCulture, $"hole {index}");
+                degenerate.Add($"{shape.Id}'s {role}");
+                ring = null;
+            }
+
+            if (ring == null)
+            {
+                if (index == 0)
+                {
+                    return null;
+                }
+
+                continue;
+            }
+
+            kept.Add(ring);
+            if (shape.Rings.Count > index)
+            {
+                arcs.Add(shape.Rings[index]);
+            }
+        }
+
+        return new Shape(shape.Id, this.geometryFactory.CreatePolygon(kept[0], [.. kept.Skip(1)]), arcs);
     }
 
     // A ring that comes out of this with too little left to close is left out rather than
@@ -685,6 +776,15 @@ internal sealed class ConvertCommand : Command
             .Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState)
             .ToArray();
 
+        // Nothing is thinned at full detail, so nothing is taken out by coordinate here; what
+        // this pass is for is the rings that are not rings, which the same method decides. It
+        // runs before the sharing check as well as before the writers, because a ring that is
+        // not written should not be counted either.
+        HashSet<(double X, double Y)> keepEveryCoordinate = [];
+        national = this.Filter(national, keepEveryCoordinate, "the national layer");
+        substates = this.Filter(substates, keepEveryCoordinate, "the substate layer");
+        written = this.Filter(written, keepEveryCoordinate, "the combined output");
+
         // After unprojecting and before writing, so that what is checked is as close to
         // what is written as it can be. Rounding to the output decimals happens as the file
         // is written and can only bring two coordinates together, never separate them, so
@@ -732,13 +832,16 @@ internal sealed class ConvertCommand : Command
             // Checked on the national layer rather than on what is written, because that is
             // the layer covering the land and so the only one with a coast to be compared
             // against. The coordinates dropped are the same for either set.
-            Country[] simplified = this.Filter(national, removed);
+            Country[] simplified = this.Filter(national, removed, "the national layer");
+            Country[] simplifiedSubstates = this.Filter(substates, removed, "the substate layer");
             Log.Information(
                 "Simplifying leaves {Rings} of the {Total} rings of the national layer standing.",
                 CountRings(simplified),
                 CountRings(national));
             this.verificationService.VerifySharing(simplified, GetOneSided(arcs, removed, droppedNational));
-            await WriteGeoJsonAsync(this.Filter(written, removed), GetOutFile(outFile, output.Suffix))
+            await WriteGeoJsonAsync(
+                    this.Filter(written, removed, "the combined output"),
+                    GetOutFile(outFile, output.Suffix))
                 .ConfigureAwait(false);
 
             // The same rings over shorter arcs. Which vertices went was decided once per arc, so
@@ -746,8 +849,8 @@ internal sealed class ConvertCommand : Command
             // changes and the two sides of a border stay the same line.
             await this.topoJsonService.WriteAsync(
                     [
-                        ("countries", this.Filter(national, removed)),
-                        ("substates", this.Filter(substates, removed)),
+                        ("countries", simplified),
+                        ("substates", simplifiedSubstates),
                     ],
                     arcs.ToDictionary(
                         pair => pair.Key,
