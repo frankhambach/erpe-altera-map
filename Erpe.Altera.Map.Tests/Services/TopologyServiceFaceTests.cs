@@ -390,6 +390,63 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldDropTheArc_WhenItComesBackToItsNodeAlongTheSameLine(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // One line drawn twice inside a single arc. 4f sees one line drawn twice as two arcs
+        // sharing two nodes; this one shares its node with itself, so 4f cannot reach it.
+        //
+        // Both of its half-edges leave the node along the same ray, so both get the same
+        // departure angle, the sort falls through to the arc identifier - which cannot separate
+        // them either, since both are the same arc - and which of the two the traversal turns
+        // onto comes down to the order they were added in. There is no ordering them: reading
+        // the arc forwards and backwards gives the same sequence, so comparing the two further
+        // along, which is what separates two different arcs leaving at one angle, answers
+        // "equal" at every vertex. It goes instead.
+        //
+        // Arc 11183 was 0.00024 units of this at node 363 and arc 11589 0.00057 at node 756,
+        // both of them minted by 4a splitting at a crossing.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Arc retraced = AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Border,
+            east,
+            east,
+            [(11.0, 0.0)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
+
+        arcGraph.Arcs.Should().NotContain(retraced).And.HaveCount(2);
+        arcGraph.Faces.Should().ContainSingle();
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepTheArc_WhenItComesBackToItsNodeByAnotherRoute(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The test above is exact and has to be. This arc leaves its node and comes back a
+        // different way, so its two half-edges leave in two directions and there is nothing
+        // arbitrary about the order between them. What it encloses is a sliver a hundredth of a
+        // unit wide, and a tolerance generous enough to call that nothing would take islands
+        // and lake shores with it.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Arc sliver = arcGraph.AddArc(
+            ArcKind.Coast,
+            Create(coordinateSequenceFactory, [(0.0, 0.0), (1.0, 0.0), (1.0, 0.01), (0.0, 0.0)]));
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
+
+        arcGraph.Arcs.Should().Contain(sliver);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldKeepTheIsland_WhenAClosedArcIsShorterThanTheTolerance(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

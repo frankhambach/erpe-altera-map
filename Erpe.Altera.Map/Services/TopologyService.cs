@@ -6,6 +6,7 @@ namespace Erpe.Altera.Map.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 
 using Erpe.Altera.Map.Contracts;
@@ -122,6 +123,17 @@ public sealed class TopologyService : ITopologyService
                 duplicates,
                 duplicateLength,
                 widest);
+        }
+
+        (int retraced, double retracedLength) = RemoveRetracedArcs(arcGraph);
+        if (retraced > 0)
+        {
+            Log.Information(
+                "Dropped {Retraced} closed arcs covering {Length:0.#####} units that leave their node and come "
+                + "back along the same line, so that both of their half-edges claim the same direction out of "
+                + "it and the order between them is arbitrary.",
+                retraced,
+                retracedLength);
         }
 
         (int dangles, double dangleLength, double longestDangle) = RemoveDanglingArcs(
@@ -340,6 +352,118 @@ public sealed class TopologyService : ITopologyService
                 ++pruned;
             }
         }
+    }
+
+    // An arc that reads the same forwards as backwards is one line drawn twice inside a single
+    // arc: it leaves its node, runs out to a point and comes back over itself. 4f catches one
+    // line drawn twice as two arcs; this is the same defect wearing one arc, which 4f cannot see
+    // because it only looks at pairs sharing two nodes and this one shares its node with itself.
+    //
+    // It matters because of the order 4b sorts a node's half-edges into. Both half-edges of such
+    // an arc leave along the same ray, so GetDepartureAngle gives them the same angle, the sort
+    // falls through to ThenBy(arc.Id) - which cannot separate them either, both being the same
+    // arc - and which of the two the traversal turns onto is left to the order they happened to
+    // be added in. One of those orders sends a face onto a half-edge another ring has already
+    // taken, which is the warning TraceRings carries and a face left unclosed.
+    //
+    // There is no ordering them, which is why they are removed rather than sorted. Comparing the
+    // two further along the arc, which is the remedy for two different arcs leaving at one
+    // angle, answers "equal" at every vertex here: the two sequences are the same sequence.
+    //
+    // The test is exact and needs no tolerance, which is what makes it safe where the enclosed
+    // radius of 3a-bis is not. Of the 10,032 arcs in the traced graph and the 5,599 closed ones
+    // among them, two read the same both ways: arc 11183, 0.00024 units of substate border at
+    // node 363, and arc 11589, 0.00057 units of coast at node 756. Both enclose exactly nothing.
+    // The radius test would want a kind restriction to stay safe - 1,326 closed coast arcs score
+    // under its threshold - and that restriction is what hides the coast one.
+    //
+    // It has to run here rather than in 1b-bis or 3a-bis, because neither arc exists when those
+    // run: before 4a nodes the crossings the graph holds 9,824 arcs with 11,128 the highest
+    // identifier, and afterwards 10,138 with 11,685, so 4a's own splitting is what makes them.
+    // It runs before the dangles, so that an arc left with nothing on its far end by one of
+    // these going is pruned in the same pass rather than in the next run.
+    private static (int Dropped, double Length) RemoveRetracedArcs(ArcGraph arcGraph)
+    {
+        Arc[] retraced = [.. arcGraph.Arcs.Where(arc => (arc.StartNode == arc.EndNode) && IsRetraced(arc))];
+        double length = 0.0;
+        foreach (Arc arc in retraced)
+        {
+            length += GetLength(arc.GetFullCoordinates());
+            arcGraph.Arcs.Remove(arc);
+        }
+
+        return (retraced.Length, length);
+    }
+
+    private static bool IsRetraced(Arc arc)
+    {
+        Coordinate[] coordinates = arc.GetFullCoordinates();
+        for (int i = 0; i < (coordinates.Length / 2); ++i)
+        {
+            if (!coordinates[i].Equals2D(coordinates[coordinates.Length - 1 - i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Where two half-edges leave a node at the same angle, which of them 4b turns onto is
+    // arbitrary: the sort falls through to ThenBy(arc.Id), and an identifier is not a direction.
+    // Worse, 4a mints identifiers as it splits arcs at crossings, so one shape added elsewhere
+    // on the map can renumber the two and silently swap the turn - the partition stops being a
+    // function of the geometry.
+    //
+    // Nothing on this map ties any more. The 109 nodes this once reported were measured before
+    // the needles of 1b-bis, the collapsed stubs of 3a-bis, the duplicates of 4f, the grid
+    // contraction of 4e and the overshoots pruned above, every one of which removes a reason for
+    // two arcs to leave a node along one ray. The two that outlasted all of them were one arc
+    // with itself, and 4g above drops those. So this reports rather than repairs, and it is the
+    // signal that the repair is wanted: two arcs that genuinely diverge can be ordered by
+    // comparing them further along than their first vertex, which is work worth doing when
+    // there is something to do it to.
+    //
+    // Reported for every tie and not only for two different arcs, because after 4g a tie of
+    // either kind is the same hazard with the same remedy. A closed arc whose two ends leave
+    // collinearly without retracing each other is orderable in exactly the same way, and
+    // staying silent about it would leave a blind spot where a warning costs nothing.
+    private static void ReportTiedDepartures(Dictionary<Node, DirectedArc[]> outgoing)
+    {
+        List<string> ties = [];
+        foreach ((Node node, DirectedArc[] arcs) in outgoing.OrderBy(pair => pair.Key.Id))
+        {
+            for (int i = 0; i < (arcs.Length - 1); ++i)
+            {
+                if (!GetDepartureAngle(arcs[i]).Equals(GetDepartureAngle(arcs[i + 1])))
+                {
+                    continue;
+                }
+
+                ties.Add(
+                    arcs[i].Arc == arcs[i + 1].Arc
+                        ? string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"arc {arcs[i].Arc.Id} with itself at node {node.Id}")
+                        : string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"arcs {arcs[i].Arc.Id} and {arcs[i + 1].Arc.Id} at node {node.Id}"));
+            }
+        }
+
+        if (ties.Count == 0)
+        {
+            return;
+        }
+
+        Log.Warning(
+            "{Ties} pairs of half-edges leave a node at the same angle, so which of them the traversal turns "
+            + "onto falls to the arc identifier and is arbitrary: {Which}. A face there may come out traced the "
+            + "wrong way round. Two different arcs can be put in order by comparing them further along than "
+            + "their first vertex; an arc tied with itself runs back over its own line and should have gone in "
+            + "4g.",
+            ties.Count,
+            string.Join(", ", ties.Take(10)) + (ties.Count > 10 ? ", and more" : string.Empty));
     }
 
     // The next half-edge of the boundary out of the node this one ends at. Clockwise from the way
@@ -791,6 +915,10 @@ public sealed class TopologyService : ITopologyService
     private static List<(DirectedArc[] Ring, double SignedArea)> TraceRings(ArcGraph arcGraph)
     {
         Dictionary<Node, DirectedArc[]> outgoing = BuildOutgoing(arcGraph);
+
+        // Here rather than in BuildOutgoing, which 6a calls again for the dissolve: the graph is
+        // the same by then and a second report would say the same thing twice.
+        ReportTiedDepartures(outgoing);
         Dictionary<DirectedArc, int> positions = new Dictionary<DirectedArc, int>();
         foreach ((Node _, DirectedArc[] arcs) in outgoing)
         {
