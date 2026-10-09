@@ -1023,11 +1023,65 @@ with no break — most are ordinary sharp corners that have to stay. Where the j
 lands on the segment is no sharper: Mauretania's sits 0.092 along a 2-unit segment. So the
 overshoot is left alone and the copy it creates is removed instead.
 
-A separate hazard found looking for this one: **109 nodes have two half-edges leaving at
-genuinely equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore
-arbitrary. One of them, node 633 at 2440.35, 857.64, sits inside the face dropped for
-Avanarsuaq. Breaking those ties properly needs the arcs compared further along than their
-first vertex.
+A separate hazard found looking for this one: **nodes where two half-edges leave at genuinely
+equal angles**, where the order falls to `ThenBy(arc.Id)` and is therefore arbitrary. That
+report read 109 when it was first taken. 4g below is what came of chasing it.
+
+**4g. Drop an arc that comes back to its node along its own line.** The order 4b sorts a node's
+half-edges into is only a cyclic order if each of them leaves in its own direction. Two that
+leave along the same ray have no order recoverable from their first vertex, so the sort falls
+through to `ThenBy(arc.Id)`, which is not a direction at all — and worse, is not stable, since
+4a mints identifiers as it splits arcs at crossings and one shape added elsewhere on the map
+can renumber the pair and silently swap the turn. One wrong turn there sends a face onto a
+half-edge another ring has already taken, which is the warning 4b carries and a face left
+unclosed.
+
+**Measured again after everything above, the 109 are 2** — and both of them are *one arc tied
+with itself*. The figure was taken before the needles of 1b-bis, the collapsed stubs of
+3a-bis, the duplicates of 4f, the contraction of 4e and the overshoots of 4d-bis, every one of
+which removes a reason for two arcs to leave a node along one ray. Those five fixes took the
+other 107 with them without being aimed at them.
+
+**What survives is not orderable, which is the finding.** Each is a closed arc that leaves its
+node, runs out to a point and comes back over itself — one line drawn twice inside a single
+arc, where 4f catches one line drawn twice as two arcs and cannot reach this because it only
+looks at pairs sharing two nodes and this one shares its node with itself. Read forwards and
+backwards such an arc gives *the same sequence*, so the remedy the paragraph above reaches for
+— comparing the two further along than their first vertex — answers "equal" at every vertex.
+There is nothing to compare. So the arc goes instead of being sorted.
+
+**The test is exact and wants no tolerance**, which is what makes it safe where 3a-bis's
+enclosed radius is not: of the 10,032 arcs in the traced graph and the 5,599 closed ones among
+them, two read the same both ways.
+
+| arc | kind | points | length | enclosed radius |
+| --- | --- | --- | --- | --- |
+| 11183, at node 363 | substate | 3 | 0.00024 | 0 |
+| 11589, at node 756 | coast | 3 | 0.00057 | 0 |
+
+The radius test would need a kind restriction to stay safe — 1,326 closed coast arcs score
+under its threshold — and that restriction is exactly what hides the coast one. A palindrome
+needs no such hedge: an island or a lake shore is never its own reflection.
+
+It runs here and not in 1b-bis or 3a-bis **because neither arc exists when those run**. Before
+4a nodes the crossings the graph holds 9,824 arcs with 11,128 the highest identifier;
+afterwards 10,138 with 11,685. 4a's own splitting makes them. It runs before 4d-bis prunes the
+dangles, so that anything left with nothing on its far end goes in the same pass.
+
+**Every output file is byte-identical with and without it**, which is the honest result for a
+hygiene fix: the two ties were landing on the benign side of the arbitrary order. Tracing one
+through shows why. One half-edge forms a single-edge ring of zero signed area, which is neither
+shell nor hole and is discarded — the outlines bounding no face go from 5,168 to 5,166 — and
+the other is absorbed into a neighbouring ring as a spur enclosing nothing. For a spur that
+accounting is right, since a spur has one side. But nothing *chose* that; the order the two
+half-edges happened to be added in did, and `arc.Id`, the nominal tie-break, cannot tell them
+apart at all. This removes the coin rather than calling it.
+
+**4b now reports any tie that is left**, naming the node and the two arcs. It is silent on this
+map. Reported for every tie rather than only for two different arcs, because after 4g a tie of
+either kind is the same hazard with the same remedy — a closed arc whose two ends leave
+collinearly without retracing each other is orderable in exactly the same way — and silence
+there would be a blind spot where a warning costs nothing.
 
 ## Phase 5 — assign faces to countries
 
@@ -1693,10 +1747,24 @@ and the collapse-not-delete semantics (0e).
    last 24 were a needle that returns to a vertex, a needle that reverses without returning to
    one, a line drawn twice and an overshoot past a crossing. The report stays, because it is
    still how a chain that never closes announces itself.
-4. **The 109 nodes where two half-edges leave at genuinely equal angles**, where the order
-   falls to `ThenBy(arc.Id)` and is arbitrary. One of them, node 633 at 2440.35, 857.64, lies
-   inside Avanarsuaq's dropped face. Breaking those ties needs the arcs compared further
-   along than their first vertex.
+4. **Done, and the number was the whole of the question.** This item read: 109 nodes have two
+   half-edges leaving at genuinely equal angles, the order falls to `ThenBy(arc.Id)` and is
+   arbitrary, and breaking the ties needs the arcs compared further along than their first
+   vertex.
+
+   Measured again, the 109 are **2**. The figure predated the needles, the collapsed stubs, the
+   duplicates, the grid contraction and the overshoot prune, and those five took 107 of them
+   away as a side effect of being aimed at something else. The two that outlasted them are each
+   *one arc tied with itself*, and for those the remedy this item proposed cannot work: an arc
+   read forwards and backwards is the same sequence, so comparing further along answers "equal"
+   at every vertex. 4g drops them instead, on an exact palindrome test that catches 2 of 10,032
+   arcs and needs no tolerance. Every output file is byte-identical afterwards — the ties had
+   been falling on the benign side, with nothing but luck holding them there.
+
+   What is left of the item is the report: 4b now warns on any tie, naming the node and the
+   arcs, and it is silent. Comparing two genuinely diverging arcs further along remains the
+   right fix for a tie between two *different* arcs, and is worth writing when a map produces
+   one.
 5. **Done.** 6e, TopoJSON, which wanted 1 and ideally 2 done first and got both. Three files
    beside the GeoJson, one per detail level, each carrying both layers as objects over one set of
    arcs; verified by decoding them cold against the GeoJson with no geometry differences anywhere.
