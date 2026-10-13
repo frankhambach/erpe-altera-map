@@ -64,8 +64,10 @@ internal sealed class ConvertCommand : Command
     // offers it, that takes the rings lost to simplification from eight to none, and it costs
     // 676 of the 1,082,750 coordinates dropped at 0.01, which is 0.06%.
     //
-    // It is not a proof. Three points can still lie on one line, and only a floor derived from
-    // the ring rather than from the arc could promise otherwise. Nothing on this map needs it.
+    // On its own it is not a proof - three points can still lie on one line - which is why it is
+    // only where the floors start. SelectRemoved raises them on any ring that comes out
+    // enclosing nothing and simplifies again, and that is what makes the guarantee. These two
+    // constants are what keeps the guarantee from ever having to do anything on this map.
     private const int OpenArcMinimumPoints = 3;
 
     private const double LowTolerance = 0.01;
@@ -414,6 +416,28 @@ internal sealed class ConvertCommand : Command
         ];
     }
 
+    // The rings a tolerance could cost their ground, each with the arcs whose floors are the only
+    // way to keep it. Taken once for the whole run rather than once per tolerance, since it
+    // depends on the geometry and not on the tolerance; per tolerance it cost 20 seconds of a
+    // 120 second run and this way it costs nothing measurable.
+    //
+    // Only the rings that enclose something to begin with. Anian's islet beyond the rim and
+    // Namaquab's lake of 1.3e-7 square units enclose nothing before a vertex is touched, so no
+    // floor can save them and there is no point asking.
+    private static (LinearRing Ring, DirectedArc[] Arcs)[] GetProtectable(IEnumerable<Country> countries)
+    {
+        return
+        [
+            .. countries.SelectMany(country => country.Shapes)
+                .SelectMany(
+                    shape => shape.Polygon.Holes.Prepend<LinearRing>(shape.Polygon.Shell)
+                        .Select((ring, index) => (Ring: ring, Index: index))
+                        .Where(pair => shape.Rings.Count > pair.Index)
+                        .Select(pair => (pair.Ring, Arcs: shape.Rings[pair.Index])))
+                .Where(pair => Round(pair.Ring).GetWinding() != 0),
+        ];
+    }
+
     // The coordinates simplification takes out, decided arc by arc and collected into one
     // set. Dropping by coordinate rather than by position is what carries the decision to
     // both sides of a border: each side holds the same coordinates, so each side loses the
@@ -422,18 +446,87 @@ internal sealed class ConvertCommand : Command
     // All the arcs in one call, because the rule that settles a shared coordinate needs to see
     // every arc that carries it. There used to be a second pass here putting the nodes back
     // afterwards; the rule covers them and it is gone.
-    private HashSet<(double X, double Y)> SelectRemoved(Dictionary<Arc, Coordinate[]> arcs, double tolerance)
+    //
+    // And a ring that would come out enclosing nothing has the floors of its arcs raised
+    // until it does not. The two floors above are a guess at how much a ring needs, made
+    // arc by arc, and a guess cannot promise anything: a ring is k arcs and only the ring knows
+    // whether what is left of them still encloses ground. So the guess is where this starts
+    // rather than where it ends, and the answer is taken again until every ring that enclosed
+    // ground still does.
+    //
+    // It ends because raising a floor only ever keeps more, and because the cap is the arc's own
+    // length - at that floor nothing is removed from it at all, so a ring made of such arcs is
+    // exactly what it was before simplification, and every ring asked about here enclosed ground
+    // then. An arc already at its length is dropped from the asking, which is also what keeps a
+    // ring that can never be saved from being asked about for ever.
+    //
+    // On this map it never runs: the floors above are chosen so that nothing collapses, and the
+    // loop confirms it and stops. Forced to run - both floors set to 2, which is what used to
+    // lose eight rings - it raises 577 arcs at 0.001 and 3,682 at 0.01, in one round each, and
+    // every ring stands. That is the only way this has been exercised, since the loop lives
+    // here rather than in a service and nothing unit-tests it.
+    private HashSet<(double X, double Y)> SelectRemoved(
+        Dictionary<Arc, Coordinate[]> arcs,
+        (LinearRing Ring, DirectedArc[] Arcs)[] rings,
+        double tolerance)
     {
-        return
-        [
-            .. this.simplificationService.SelectRemoved(
-                [
-                    .. arcs.Select(
-                        pair => (pair.Value,
-                            pair.Key.IsClosed ? ClosedArcMinimumPoints : OpenArcMinimumPoints)),
-                ],
-                tolerance),
-        ];
+        Dictionary<Arc, int> floors = arcs.Keys.ToDictionary(
+            arc => arc,
+            arc => arc.IsClosed ? ClosedArcMinimumPoints : OpenArcMinimumPoints);
+        int rounds = 0;
+        int raised = 0;
+        while (true)
+        {
+            HashSet<(double X, double Y)> removed =
+            [
+                .. this.simplificationService.SelectRemoved(
+                    [.. arcs.Select(pair => (pair.Value, floors[pair.Key]))],
+                    tolerance),
+            ];
+            Arc[] wanting =
+            [
+                .. rings.Where(pair => !this.Survives(pair.Ring, removed))
+                    .SelectMany(pair => pair.Arcs)
+                    .Select(directed => directed.Arc)
+                    .Distinct()
+                    .Where(arc => floors[arc] < arcs[arc].Length),
+            ];
+            if (wanting.Length == 0)
+            {
+                if (rounds > 0)
+                {
+                    Log.Information(
+                        "Raised the floor on {Raised} arcs over {Rounds} rounds to keep every ring that "
+                        + "enclosed ground still enclosing it.",
+                        raised,
+                        rounds);
+                }
+
+                return removed;
+            }
+
+            // Doubled rather than stepped, so that this settles in a few rounds whatever the
+            // arcs are, and capped at the arc's own length, which is the floor that removes
+            // nothing at all. At that floor a ring is exactly what it was before simplification,
+            // and the rings asked about here all enclosed ground then, so the loop ends.
+            foreach (Arc arc in wanting)
+            {
+                floors[arc] = Math.Min(arcs[arc].Length, floors[arc] * 2);
+            }
+
+            raised += wanting.Length;
+            ++rounds;
+        }
+    }
+
+    // Whether a ring is still a ring once those coordinates are gone, asked with the two tests
+    // that actually drop one in Filter below, so that the floors cannot come to protect
+    // something different from what is at risk.
+    private bool Survives(LinearRing ring, HashSet<(double X, double Y)> removed)
+    {
+        LinearRing? kept = this.Filter(ring, removed);
+
+        return (kept != null) && (Round(kept).GetWinding() != 0);
     }
 
     // The countries with those coordinates taken out of them, and with whatever that leaves
@@ -819,6 +912,8 @@ internal sealed class ConvertCommand : Command
                 GetTopoJsonFile(outFile, string.Empty))
             .ConfigureAwait(false);
 
+        (LinearRing Ring, DirectedArc[] Arcs)[] protectable = GetProtectable(countries);
+
         // The coarse outputs are simplified by arc and not by polygon: which vertices go is
         // decided once for each arc, and then those coordinates are dropped wherever they
         // appear. Simplifying each polygon on its own, as this did before, gives the two
@@ -830,7 +925,7 @@ internal sealed class ConvertCommand : Command
                          (Suffix: "-low", Tolerance: LowTolerance),
                      })
         {
-            HashSet<(double X, double Y)> removed = this.SelectRemoved(arcs, output.Tolerance);
+            HashSet<(double X, double Y)> removed = this.SelectRemoved(arcs, protectable, output.Tolerance);
             Log.Information(
                 "Simplifying at {Tolerance} removes {Removed} of the {Total} distinct coordinates in the arcs.",
                 output.Tolerance,
