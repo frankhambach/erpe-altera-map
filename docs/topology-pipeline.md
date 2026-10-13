@@ -1301,18 +1301,58 @@ the same ones. `VisvalingamSimplificationService` is now an open-line simplifier
 ring-based polygon method it used to expose is gone, since nothing can use it without
 breaking the guarantee.
 
-Three details that are not incidental:
+**A coordinate goes only if every arc carrying it offered it up**, and that is the whole of
+step 2 rather than a detail of it. Pooling the answers arc by arc does not work, because a
+minimum count is a promise about one arc and dropping by value breaks it wherever two arcs
+share a coordinate. Arc 1477 is a five-point island, floored at six, so it offers nothing at
+all; arc 9922 is 7,777 points of mainland coast that touches it at one vertex and drops it
+there, and the island lost it too. **Six rings died that way** - three of Nunangats', and
+Windmark's, Wanka's and another of Nunangats' - and the island is always the one that cannot
+afford it. Keeping them costs 14 coordinates at 0.001 and 27 at 0.01.
 
-- **Node coordinates are subtracted from the set afterwards.** An arc never offers up its
-  own ends, but another arc may carry the same coordinate somewhere in its interior, and
-  dropping it there would take a junction with it.
+It also settles the nodes, which used to need a pass of their own subtracting them from the
+set afterwards. No arc offers up its own ends, so a node is always declined by somebody
+whatever another arc does with the same point in its own interior. That pass is gone.
+
+Two floors, and both are about rings rather than arcs:
+
 - **An arc that closes on itself keeps at least 6 points** (`ClosedArcMinimumPoints`). An
   island is one closed arc, and simplifying one down to a triangle loses it; 6 is the floor
   the old ring-based simplifier used, kept so the coarse outputs lose no more small islands
   than before.
+- **An arc that does not keeps at least 3** (`OpenArcMinimumPoints`). Two would be its own two
+  nodes and nothing between them, which is a straight line, and **a ring of k such arcs comes
+  out as a k-gon over its nodes**: at k of two that is a line and the shape is gone. Gibraltar
+  is one border arc and one coast arc, and at 0.01 it vanished whole and took the country out
+  of the file with it; Macau is the same two-arc shape and came out as three points on one
+  line. Three leaves every open arc a vertex of its own, so a ring of k arcs keeps 2k points
+  rather than k. 676 coordinates of the 1,082,750 dropped at 0.01, which is 0.06%.
+
+  It is not a proof: three points can still lie on one line, and only a floor derived from the
+  ring rather than from the arc could promise otherwise. Nothing on this map needs one, and
+  what would be needed is written down - raise the floors of a collapsed ring's arcs and
+  simplify again, to a fixpoint, which stays per-arc and so keeps the sharing intact.
+
 - **A ring left with too little to close is omitted, not kept unsimplified.** Keeping it
   would be the one thing that breaks sharing, since its neighbour would have dropped those
-  coordinates and it would not. It costs 8 rings of 6467 at 0.001 and 10 at 0.01.
+  coordinates and it would not. It used to cost 8 rings of 6467 at 0.001 and 10 at 0.01;
+  with the rule and the two floors above it **costs none at either tolerance**, and what it
+  still catches is the two rings that enclosed nothing before simplification ever ran -
+  Anian's islet beyond the rim and Namaquab's lake of 1.3e-7 square units.
+
+| | 0.001 | 0.01 |
+| --- | --- | --- |
+| rings standing, before | 6,477 of 6,480 | 6,472 of 6,480 |
+| rings standing, after | **6,480 of 6,480** | **6,480 of 6,480** |
+| countries written with no geometry | | Gibraltar, now none |
+| coordinates kept back | 192 | 676 |
+
+**No country is missing from any output any more**: all three files carry 1,575, where
+`out-low.json` carried 1,574. The full-detail files are byte-identical, since simplification
+never touched them. At the two coarse tolerances the residue 7 reports rises from 4 unaccounted
+segments to 5 and from 0 segments used twice by one country to 1, which is not a regression but
+the opposite: those are the Nunangats and Chernorus needles and Bruni's triangle, which exist at
+full detail and were being simplified out of existence rather than reported.
 
 **Verified**: 951,315 of the 1,172,853 arc coordinates go at 0.001 and 1,086,487 at 0.01,
 leaving files of 5.63 MB and 2.36 MB against 5.59 and 2.35 before, so the tolerances still
