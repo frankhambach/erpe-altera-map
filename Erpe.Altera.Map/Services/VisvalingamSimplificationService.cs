@@ -56,6 +56,52 @@ public sealed class VisvalingamSimplificationService : ISimplificationService
         return [.. offered.Where(pair => pair.Value == carried[pair.Key]).Select(pair => pair.Key)];
     }
 
+    public (IReadOnlySet<(double X, double Y)> Removed, int Raised, int Rounds) SelectRemoved(
+        IReadOnlyList<(Coordinate[] Line, int MinimumCount)> lines,
+        IReadOnlyList<int[]> rings,
+        Func<int, IReadOnlySet<(double X, double Y)>, bool> survives,
+        double tolerance)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        ArgumentNullException.ThrowIfNull(rings);
+        ArgumentNullException.ThrowIfNull(survives);
+
+        // Through the same floor the single-line overload applies, so that a count of nothing
+        // cannot be doubled to nothing for ever.
+        int[] counts = [.. lines.Select(line => Math.Max(2, line.MinimumCount))];
+        int raised = 0;
+        int rounds = 0;
+        while (true)
+        {
+            HashSet<(double X, double Y)> removed =
+            [
+                .. this.SelectRemoved(
+                    [.. lines.Select((line, index) => (line.Line, counts[index]))],
+                    tolerance),
+            ];
+            int[] wanting =
+            [
+                .. Enumerable.Range(0, rings.Count)
+                    .Where(ring => !survives(ring, removed))
+                    .SelectMany(ring => rings[ring])
+                    .Distinct()
+                    .Where(line => counts[line] < lines[line].Line.Length),
+            ];
+            if (wanting.Length == 0)
+            {
+                return (removed, raised, rounds);
+            }
+
+            foreach (int line in wanting)
+            {
+                counts[line] = Math.Min(lines[line].Line.Length, counts[line] * 2);
+            }
+
+            raised += wanting.Length;
+            ++rounds;
+        }
+    }
+
     // Each coordinate once per line, however many times that line carries it, so that a line
     // running over the same point twice cannot outvote itself.
     private static void Count(Dictionary<(double X, double Y), int> counts, IEnumerable<Coordinate> coordinates)

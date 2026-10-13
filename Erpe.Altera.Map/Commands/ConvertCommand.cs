@@ -450,85 +450,47 @@ internal sealed class ConvertCommand : Command
     // same ones.
     //
     // All the arcs in one call, because the rule that settles a shared coordinate needs to see
-    // every arc that carries it. There used to be a second pass here putting the nodes back
-    // afterwards; the rule covers them and it is gone.
-    //
-    // And a ring that would come out enclosing nothing has the floors of its arcs raised
-    // until it does not. The two floors above are a guess at how much a ring needs, made
-    // arc by arc, and a guess cannot promise anything: a ring is k arcs and only the ring knows
-    // whether what is left of them still encloses ground. So the guess is where this starts
-    // rather than where it ends, and the answer is taken again until every ring that enclosed
-    // ground still does.
-    //
-    // It ends because raising a floor only ever keeps more, and because the cap is the arc's own
-    // length - at that floor nothing is removed from it at all, so a ring made of such arcs is
-    // exactly what it was before simplification, and every ring asked about here enclosed ground
-    // then. An arc already at its length is dropped from the asking, which is also what keeps a
-    // ring that can never be saved from being asked about for ever.
+    // every arc that carries it, and because the floors it starts from are raised until no ring
+    // comes out enclosing nothing. Both of those belong to the simplifier; what belongs here is
+    // only what counts as a ring still being one, which is Survives below. There used to be a
+    // second pass here putting the node coordinates back afterwards, and the shared-coordinate
+    // rule covers them: no arc offers up its own ends, so some carrier always declines them.
     //
     // On this map it raises 4 arcs at 0.01 and none at 0.001, in one round: Gibraltar's border
-    // and coast and Macau's, which are the two rings that come out as a line otherwise. Pushed
-    // harder, with the closed floor at 2 as well, it raises 577 arcs at 0.001 and 3,682 at 0.01,
-    // still in one round each, and every ring stands. The loop lives here rather than in a
-    // service and nothing unit-tests it; the two predicates it rests on are tested.
+    // and coast and Macau's, which are the two rings that come out as a line otherwise.
     private HashSet<(double X, double Y)> SelectRemoved(
         Dictionary<Arc, Coordinate[]> arcs,
         (LinearRing Ring, DirectedArc[] Arcs)[] rings,
         double tolerance)
     {
-        Dictionary<Arc, int> floors = arcs.Keys.ToDictionary(
-            arc => arc,
-            arc => arc.IsClosed ? ClosedArcMinimumPoints : OpenArcMinimumPoints);
-        int rounds = 0;
-        int raised = 0;
-        while (true)
+        Arc[] ordered = [.. arcs.Keys];
+        Dictionary<Arc, int> indexes = ordered.Select((arc, index) => (arc, index))
+            .ToDictionary(pair => pair.arc, pair => pair.index);
+        (IReadOnlySet<(double X, double Y)> removed, int raised, int rounds) =
+            this.simplificationService.SelectRemoved(
+                [
+                    .. ordered.Select(
+                        arc => (arcs[arc], arc.IsClosed ? ClosedArcMinimumPoints : OpenArcMinimumPoints)),
+                ],
+                [.. rings.Select(pair => pair.Arcs.Select(directed => indexes[directed.Arc]).Distinct().ToArray())],
+                (ring, dropped) => this.Survives(rings[ring].Ring, dropped),
+                tolerance);
+        if (rounds > 0)
         {
-            HashSet<(double X, double Y)> removed =
-            [
-                .. this.simplificationService.SelectRemoved(
-                    [.. arcs.Select(pair => (pair.Value, floors[pair.Key]))],
-                    tolerance),
-            ];
-            Arc[] wanting =
-            [
-                .. rings.Where(pair => !this.Survives(pair.Ring, removed))
-                    .SelectMany(pair => pair.Arcs)
-                    .Select(directed => directed.Arc)
-                    .Distinct()
-                    .Where(arc => floors[arc] < arcs[arc].Length),
-            ];
-            if (wanting.Length == 0)
-            {
-                if (rounds > 0)
-                {
-                    Log.Information(
-                        "Raised the floor on {Raised} arcs over {Rounds} rounds to keep every ring that "
-                        + "enclosed ground still enclosing it.",
-                        raised,
-                        rounds);
-                }
-
-                return removed;
-            }
-
-            // Doubled rather than stepped, so that this settles in a few rounds whatever the
-            // arcs are, and capped at the arc's own length, which is the floor that removes
-            // nothing at all. At that floor a ring is exactly what it was before simplification,
-            // and the rings asked about here all enclosed ground then, so the loop ends.
-            foreach (Arc arc in wanting)
-            {
-                floors[arc] = Math.Min(arcs[arc].Length, floors[arc] * 2);
-            }
-
-            raised += wanting.Length;
-            ++rounds;
+            Log.Information(
+                "Raised the floor on {Raised} arcs over {Rounds} rounds to keep every ring that enclosed "
+                + "ground still enclosing it.",
+                raised,
+                rounds);
         }
+
+        return [.. removed];
     }
 
     // Whether a ring is still a ring once those coordinates are gone, asked with the two tests
     // that actually drop one in Filter below, so that the floors cannot come to protect
     // something different from what is at risk.
-    private bool Survives(LinearRing ring, HashSet<(double X, double Y)> removed)
+    private bool Survives(LinearRing ring, IReadOnlySet<(double X, double Y)> removed)
     {
         LinearRing? kept = this.Filter(ring, removed);
 
@@ -639,7 +601,7 @@ internal sealed class ConvertCommand : Command
     // A ring that comes out of this with too little left to close is left out rather than
     // kept unsimplified: keeping it would be the one thing that breaks sharing, since its
     // neighbour would have dropped those coordinates and it would not.
-    private LinearRing? Filter(LinearRing ring, HashSet<(double X, double Y)> removed)
+    private LinearRing? Filter(LinearRing ring, IReadOnlySet<(double X, double Y)> removed)
     {
         Coordinate[] coordinates = ring.CoordinateSequence.ToCoordinateArray();
         List<Coordinate> kept = new List<Coordinate>();

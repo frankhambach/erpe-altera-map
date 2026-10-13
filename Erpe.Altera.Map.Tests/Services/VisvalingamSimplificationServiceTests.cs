@@ -102,6 +102,92 @@ public class VisvalingamSimplificationServiceTests
     }
 
     [Test]
+    public void SelectRemoved_ShouldRaiseNothing_WhenTheStartingCountsAlreadyHoldTheRing()
+    {
+        // The case that holds on the sample map at 0.001. The rings say they are happy, so the
+        // guarantee confirms it and stops, and what comes out is what the counts alone would
+        // have given. A guarantee that cost something every run would be the wrong guarantee.
+        (Coordinate[] Line, int MinimumCount)[] lines = [(Apex(0, 0, 1, 0.1, 2, 0), 2), (Apex(2, 0, 1, -0.1, 0, 0), 2)];
+
+        (IReadOnlySet<(double X, double Y)> removed, int raised, int rounds) =
+            new VisvalingamSimplificationService().SelectRemoved(lines, [[0, 1]], (_, _) => true, 0.5);
+
+        raised.Should().Be(0);
+        rounds.Should().Be(0);
+        removed.Should().BeEquivalentTo([(1.0, 0.1), (1.0, -0.1)], "both apexes carry nothing at this tolerance");
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldRaiseEveryLineOfTheRing_WhenTheRingWouldNotHoldTogether()
+    {
+        // Gibraltar: a ring of two lines, each of which simplifies to the straight run between
+        // its own two ends, leaving the ring a line. Neither line can see that on its own, which
+        // is the whole reason the ring is asked.
+        //
+        // The ring here says it holds together only while its first apex survives. Both of its
+        // lines are raised, not just the one that carries the apex, because nothing tells the
+        // loop which of them the ring wanted.
+        (Coordinate[] Line, int MinimumCount)[] lines = [(Apex(0, 0, 1, 0.1, 2, 0), 2), (Apex(2, 0, 1, -0.1, 0, 0), 2)];
+
+        (IReadOnlySet<(double X, double Y)> removed, int raised, int rounds) =
+            new VisvalingamSimplificationService().SelectRemoved(
+                lines,
+                [[0, 1]],
+                (_, dropped) => !dropped.Contains((1.0, 0.1)),
+                0.5);
+
+        rounds.Should().Be(1);
+        raised.Should().Be(2, "both lines of the ring are raised");
+        removed.Should().BeEmpty("at their own length the lines give up nothing");
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldStop_WhenNoCountCanSaveTheRing()
+    {
+        // A ring that will never say yes. The counts climb to the lines' own lengths, at which
+        // nothing is taken from them at all, and then the lines drop out of the asking and this
+        // ends rather than climbing for ever. Anian's islet beyond the rim is one of these and
+        // is kept out of the asking from the start, but the loop has to be safe without that.
+        (Coordinate[] Line, int MinimumCount)[] lines = [(Apex(0, 0, 1, 0.1, 2, 0), 2), (Apex(2, 0, 1, -0.1, 0, 0), 2)];
+
+        (IReadOnlySet<(double X, double Y)> removed, int raised, int rounds) =
+            new VisvalingamSimplificationService().SelectRemoved(lines, [[0, 1]], (_, _) => false, 0.5);
+
+        rounds.Should().Be(1);
+        raised.Should().Be(2);
+        removed.Should().BeEmpty();
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldDoubleTheCount_WhenOneRoundIsNotEnough()
+    {
+        // Doubling rather than stepping, which is what keeps this to a few rounds however long
+        // the line is. Nine points on one line, and a ring that holds together only once all but
+        // one of them survives: the count goes 2, 4, 8, which is two raisings where stepping it
+        // by one would have taken six.
+        Coordinate[] line = [.. Enumerable.Range(0, 9).Select(step => new Coordinate(step, 0))];
+        (Coordinate[] Line, int MinimumCount)[] lines = [(line, 2)];
+
+        (IReadOnlySet<(double X, double Y)> removed, int _, int rounds) =
+            new VisvalingamSimplificationService().SelectRemoved(
+                lines,
+                [[0]],
+                (_, dropped) => dropped.Count <= 1,
+                0.5);
+
+        rounds.Should().Be(2);
+        removed.Should().HaveCount(1);
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldThrowArgumentNullException_WhenTheRingPredicateIsNull()
+    {
+        Action action = () => new VisvalingamSimplificationService().SelectRemoved([], [], null!, 0.5);
+
+        action.Should().Throw<ArgumentNullException>();
+    }
+
+    [Test]
     public void SelectRemoved_ShouldThrowArgumentNullException_WhenTheLinesAreNull()
     {
         Action action = () => new VisvalingamSimplificationService().SelectRemoved(null!, 0.5);
@@ -206,5 +292,17 @@ public class VisvalingamSimplificationServiceTests
         Action action = () => new VisvalingamSimplificationService().SelectRemoved(null!, 1.0, 2);
 
         action.Should().Throw<ArgumentNullException>();
+    }
+
+    // Two ends and one apex between them, which is the smallest line with anything to lose.
+    private static Coordinate[] Apex(
+        double startX,
+        double startY,
+        double apexX,
+        double apexY,
+        double endX,
+        double endY)
+    {
+        return [new Coordinate(startX, startY), new Coordinate(apexX, apexY), new Coordinate(endX, endY)];
     }
 }
