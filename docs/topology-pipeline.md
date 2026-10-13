@@ -1328,10 +1328,9 @@ Two floors, and both are about rings rather than arcs:
   line. Three leaves every open arc a vertex of its own, so a ring of k arcs keeps 2k points
   rather than k. 676 coordinates of the 1,082,750 dropped at 0.01, which is 0.06%.
 
-  It is not a proof: three points can still lie on one line, and only a floor derived from the
-  ring rather than from the arc could promise otherwise. Nothing on this map needs one, and
-  what would be needed is written down - raise the floors of a collapsed ring's arcs and
-  simplify again, to a fixpoint, which stays per-arc and so keeps the sharing intact.
+  Neither floor is a proof on its own: three points can still lie on one line, and a floor is a
+  guess at what a ring needs made arc by arc, where only the ring knows whether what is left of
+  its arcs still encloses ground. So the floors are where this starts and not where it ends.
 
 - **A ring left with too little to close is omitted, not kept unsimplified.** Keeping it
   would be the one thing that breaks sharing, since its neighbour would have dropped those
@@ -1340,12 +1339,38 @@ Two floors, and both are about rings rather than arcs:
   still catches is the two rings that enclosed nothing before simplification ever ran -
   Anian's islet beyond the rim and Namaquab's lake of 1.3e-7 square units.
 
+**And a ring that would come out enclosing nothing has the floors of its arcs raised until it
+does not.** That is the guarantee, and it is what makes the floors above a starting guess rather
+than a promise they cannot keep: simplify, ask every ring that enclosed ground whether it still
+does, raise the floors of the arcs of any that does not, and simplify again.
+
+It ends, and for a reason worth stating. Raising a floor only ever keeps more, and the cap is
+the arc's own length - at that floor nothing is removed from the arc at all, so a ring made of
+such arcs is exactly what it was before simplification, and every ring asked about enclosed
+ground then. An arc already at its length drops out of the asking, which is also what stops a
+ring that can never be saved from being asked about for ever. Floors double rather than step, so
+it settles in a few rounds whatever the arcs are.
+
+It asks with the same two tests that actually drop a ring, in `Filter`, so the floors cannot come
+to protect something different from what is at risk. And the rings to ask about are taken once
+for the run rather than once per tolerance: per tolerance that cost 20 seconds of a 120 second
+run, and this way it costs nothing measurable.
+
+**On this map it never runs.** The floors are chosen so that nothing collapses, the loop confirms
+it and stops, and the output is byte-identical with the loop in or out. That is the point of it -
+it is the thing that holds when the next map is not this one - but it also means the only way it
+has been exercised is by forcing it: with both floors set to 2, which is what used to lose eight
+rings, it raises 577 arcs at 0.001 and 3,682 at 0.01, in one round each, and every ring stands.
+The loop lives in `ConvertCommand` beside the rest of the pipeline's wiring and nothing
+unit-tests it; the two predicates it rests on are tested.
+
 | | 0.001 | 0.01 |
 | --- | --- | --- |
 | rings standing, before | 6,477 of 6,480 | 6,472 of 6,480 |
 | rings standing, after | **6,480 of 6,480** | **6,480 of 6,480** |
 | countries written with no geometry | | Gibraltar, now none |
 | coordinates kept back | 192 | 676 |
+| rounds the guarantee needs | 0 | 0 |
 
 **No country is missing from any output any more**: all three files carry 1,575, where
 `out-low.json` carried 1,574. The full-detail files are byte-identical, since simplification
@@ -1353,6 +1378,14 @@ never touched them. At the two coarse tolerances the residue 7 reports rises fro
 segments to 5 and from 0 segments used twice by one country to 1, which is not a regression but
 the opposite: those are the Nunangats and Chernorus needles and Bruni's triangle, which exist at
 full detail and were being simplified out of existence rather than reported.
+
+**The guarantee makes the open-arc floor optional, and that is worth knowing before anyone tunes
+it.** Measured with the floor back at 2 and the loop left to do the work, the loop raises exactly
+4 arcs - Gibraltar's two and Macau's two - every ring still stands, and `out-low.json` comes out
+19 KB smaller, 0.8%. The floor of 3 buys a vertex on all 4,433 open arcs to avoid raising it on
+four. Keeping it is a choice about how a coarse border should look rather than about whether a
+shape survives, since survival is now settled either way, and it is left at 3 because that is
+what was measured and agreed.
 
 **Verified**: 951,315 of the 1,172,853 arc coordinates go at 0.001 and 1,086,487 at 0.01,
 leaving files of 5.63 MB and 2.36 MB against 5.59 and 2.35 before, so the tolerances still
