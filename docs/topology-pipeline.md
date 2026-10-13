@@ -1314,35 +1314,39 @@ It also settles the nodes, which used to need a pass of their own subtracting th
 set afterwards. No arc offers up its own ends, so a node is always declined by somebody
 whatever another arc does with the same point in its own interior. That pass is gone.
 
-Two floors, and both are about rings rather than arcs:
+One floor, and it is not the one that keeps a shape alive:
 
 - **An arc that closes on itself keeps at least 6 points** (`ClosedArcMinimumPoints`). An
   island is one closed arc, and simplifying one down to a triangle loses it; 6 is the floor
   the old ring-based simplifier used, kept so the coarse outputs lose no more small islands
-  than before.
-- **An arc that does not keeps at least 3** (`OpenArcMinimumPoints`). Two would be its own two
-  nodes and nothing between them, which is a straight line, and **a ring of k such arcs comes
-  out as a k-gon over its nodes**: at k of two that is a line and the shape is gone. Gibraltar
-  is one border arc and one coast arc, and at 0.01 it vanished whole and took the country out
-  of the file with it; Macau is the same two-arc shape and came out as three points on one
-  line. Three leaves every open arc a vertex of its own, so a ring of k arcs keeps 2k points
-  rather than k. 676 coordinates of the 1,082,750 dropped at 0.01, which is 0.06%.
+  than before. Note what kind of rule this is: a triangle still encloses ground, so no
+  guarantee about enclosing ground would save an island from becoming one. 6 is about **how
+  much of an island is left**, not about whether it is left.
+- **An arc that does not close on itself keeps 2** (`OpenArcMinimumPoints`), which is its own
+  two nodes and nothing between them - no floor at all, since those are what the simplifier
+  already refuses to go below. **A ring of k such arcs comes out as a k-gon over its nodes**,
+  and at k of two that is a line: Gibraltar is one border arc and one coast arc and once
+  vanished whole at 0.01, taking the country out of the file with it; Macau is the same two-arc
+  shape and came out as three points on one line.
 
-  Neither floor is a proof on its own: three points can still lie on one line, and a floor is a
-  guess at what a ring needs made arc by arc, where only the ring knows whether what is left of
-  its arcs still encloses ground. So the floors are where this starts and not where it ends.
+  A floor of 3 was measured first and does fix both, and it was the wrong instrument. It buys a
+  vertex on all 4,433 open arcs to avoid the guarantee below raising one on four, and costs 19
+  KB of `out-low.json` for nothing the guarantee does not already promise. A blanket floor is a
+  guess about every ring made from no ring in particular, and it cannot be a proof anyway -
+  three points lie on one line as easily as two. The rings are what know, so the rings are
+  asked.
 
 - **A ring left with too little to close is omitted, not kept unsimplified.** Keeping it
   would be the one thing that breaks sharing, since its neighbour would have dropped those
   coordinates and it would not. It used to cost 8 rings of 6467 at 0.001 and 10 at 0.01;
-  with the rule and the two floors above it **costs none at either tolerance**, and what it
-  still catches is the two rings that enclosed nothing before simplification ever ran -
+  with the rule above and the guarantee below it **costs none at either tolerance**, and what
+  it still catches is the two rings that enclosed nothing before simplification ever ran -
   Anian's islet beyond the rim and Namaquab's lake of 1.3e-7 square units.
 
 **And a ring that would come out enclosing nothing has the floors of its arcs raised until it
-does not.** That is the guarantee, and it is what makes the floors above a starting guess rather
-than a promise they cannot keep: simplify, ask every ring that enclosed ground whether it still
-does, raise the floors of the arcs of any that does not, and simplify again.
+does not.** That is the guarantee, and with the open floor at 2 it is the only thing standing
+between a two-arc country and a straight line: simplify, ask every ring that enclosed ground
+whether it still does, raise the floors of the arcs of any that does not, and simplify again.
 
 It ends, and for a reason worth stating. Raising a floor only ever keeps more, and the cap is
 the arc's own length - at that floor nothing is removed from the arc at all, so a ring made of
@@ -1356,21 +1360,24 @@ to protect something different from what is at risk. And the rings to ask about 
 for the run rather than once per tolerance: per tolerance that cost 20 seconds of a 120 second
 run, and this way it costs nothing measurable.
 
-**On this map it never runs.** The floors are chosen so that nothing collapses, the loop confirms
-it and stops, and the output is byte-identical with the loop in or out. That is the point of it -
-it is the thing that holds when the next map is not this one - but it also means the only way it
-has been exercised is by forcing it: with both floors set to 2, which is what used to lose eight
-rings, it raises 577 arcs at 0.001 and 3,682 at 0.01, in one round each, and every ring stands.
+**On this map it raises four arcs**, all of them at 0.01 and all in one round: Gibraltar's
+border and coast and Macau's, which are exactly the arcs of the two rings that would otherwise
+come out as a line. At 0.001 nothing needs it. Pushed harder, with the closed floor dropped to 2
+as well so that the islands are at risk too, it raises 577 arcs at 0.001 and 3,682 at 0.01,
+still in one round each, and every ring stands.
+
 The loop lives in `ConvertCommand` beside the rest of the pipeline's wiring and nothing
-unit-tests it; the two predicates it rests on are tested.
+unit-tests it; the two predicates it rests on are tested, and the forced run above is the rest
+of the evidence.
 
 | | 0.001 | 0.01 |
 | --- | --- | --- |
 | rings standing, before | 6,477 of 6,480 | 6,472 of 6,480 |
 | rings standing, after | **6,480 of 6,480** | **6,480 of 6,480** |
 | countries written with no geometry | | Gibraltar, now none |
-| coordinates kept back | 192 | 676 |
-| rounds the guarantee needs | 0 | 0 |
+| coordinates kept back by the shared-coordinate rule | 14 | 27 |
+| arcs the guarantee raises | 0 | 4 |
+| rounds it takes | — | 1 |
 
 **No country is missing from any output any more**: all three files carry 1,575, where
 `out-low.json` carried 1,574. The full-detail files are byte-identical, since simplification
@@ -1379,13 +1386,20 @@ segments to 5 and from 0 segments used twice by one country to 1, which is not a
 the opposite: those are the Nunangats and Chernorus needles and Bruni's triangle, which exist at
 full detail and were being simplified out of existence rather than reported.
 
-**The guarantee makes the open-arc floor optional, and that is worth knowing before anyone tunes
-it.** Measured with the floor back at 2 and the loop left to do the work, the loop raises exactly
-4 arcs - Gibraltar's two and Macau's two - every ring still stands, and `out-low.json` comes out
-19 KB smaller, 0.8%. The floor of 3 buys a vertex on all 4,433 open arcs to avoid raising it on
-four. Keeping it is a choice about how a coarse border should look rather than about whether a
-shape survives, since survival is now settled either way, and it is left at 3 because that is
-what was measured and agreed.
+**The guarantee is also what let the open-arc floor go back to 2**, which is worth recording
+because the floor was put at 3 first and measured working. Against that:
+
+| | floor 3 | floor 2 and the guarantee |
+| --- | --- | --- |
+| `out-medium.json` | 5,650,092 bytes | 5,645,359 |
+| `out-low.json` | 2,347,124 | **2,328,027** |
+| `out-low.topojson` | 1,765,212 | **1,755,967** |
+| arcs given an extra vertex | 4,433 | 4 |
+| rings standing | all | all |
+
+19 KB of the low output, 0.8%, and it buys nothing: both configurations keep every ring and
+every country. The full-detail files are byte-identical either way, since simplification never
+touches them.
 
 **Verified**: 951,315 of the 1,172,853 arc coordinates go at 0.001 and 1,086,487 at 0.01,
 leaving files of 5.63 MB and 2.36 MB against 5.59 and 2.35 before, so the tolerances still
