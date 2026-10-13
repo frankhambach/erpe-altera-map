@@ -1360,15 +1360,26 @@ to protect something different from what is at risk. And the rings to ask about 
 for the run rather than once per tolerance: per tolerance that cost 20 seconds of a 120 second
 run, and this way it costs nothing measurable.
 
+**The loop and the question are kept apart**, which is what makes it testable. The raising lives
+in `ISimplificationService` with the rest of the simplifying - it takes each ring as the indices
+of the lines it is made of, which is all it needs of one - and what counts as a ring holding
+together comes in as a predicate from `ConvertCommand`, which is the only place that knows the
+answer involves six decimals and a shoelace. The service never sees a ring's geometry and the
+command never owns the loop.
+
 **On this map it raises four arcs**, all of them at 0.01 and all in one round: Gibraltar's
 border and coast and Macau's, which are exactly the arcs of the two rings that would otherwise
 come out as a line. At 0.001 nothing needs it. Pushed harder, with the closed floor dropped to 2
 as well so that the islands are at risk too, it raises 577 arcs at 0.001 and 3,682 at 0.01,
 still in one round each, and every ring stands.
 
-The loop lives in `ConvertCommand` beside the rest of the pipeline's wiring and nothing
-unit-tests it; the two predicates it rests on are tested, and the forced run above is the rest
-of the evidence.
+Five tests cover the loop itself, with the ring's answer stubbed so each is about the raising
+and nothing else: that it raises nothing when the starting counts are already enough, which is
+what must hold on a sound map; that a ring which will not hold together has **every** line of it
+raised, since nothing tells the loop which line the ring wanted; that it stops rather than
+climbing for ever when no count can save a ring; and that the counts double, going 2, 4, 8 for a
+nine-point line where stepping by one would have taken six rounds. Disabling the raising fails
+three of them. The forced run above is the rest of the evidence, end to end.
 
 | | 0.001 | 0.01 |
 | --- | --- | --- |
