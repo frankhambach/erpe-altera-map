@@ -53,22 +53,28 @@ internal sealed class ConvertCommand : Command
     private const int ClosedArcMinimumPoints = 6;
 
     // How many points to leave an arc that does not close on itself, whatever the tolerance
-    // says. Two is its own two nodes and nothing in between, which is a straight line, and a
-    // ring made of k such arcs comes out as a k-gon over its nodes: at k of two that is a line
-    // and the shape is gone. Gibraltar is one border arc and one coast arc and vanished whole at
-    // 0.01, taking the country with it; Macau is the same two-arc shape and came out as three
-    // points on one line.
+    // says. Two is its own two nodes and nothing in between, so it is no floor at all: it is
+    // what the simplifier already refuses to go below, since an arc's ends are the nodes it
+    // meets its neighbours at.
     //
-    // Three leaves every open arc a vertex of its own, so a ring of k arcs keeps 2k points
-    // rather than k. With the rule in 6d that a coordinate goes only if every arc carrying it
-    // offers it, that takes the rings lost to simplification from eight to none, and it costs
-    // 676 of the 1,082,750 coordinates dropped at 0.01, which is 0.06%.
+    // That is deliberate, and it reads oddly only until the ring guarantee in SelectRemoved is
+    // taken into account. A ring of k arcs at this floor comes out as a k-gon over its nodes,
+    // and at k of two that is a line: Gibraltar is one border arc and one coast arc and once
+    // vanished whole at 0.01, taking the country out of the file with it. What keeps it now is
+    // not a floor but the guarantee, which raises the floors of the arcs of any ring that comes
+    // out enclosing nothing and simplifies again.
     //
-    // On its own it is not a proof - three points can still lie on one line - which is why it is
-    // only where the floors start. SelectRemoved raises them on any ring that comes out
-    // enclosing nothing and simplifies again, and that is what makes the guarantee. These two
-    // constants are what keeps the guarantee from ever having to do anything on this map.
-    private const int OpenArcMinimumPoints = 3;
+    // Three was measured first and works, and it was the wrong instrument. It buys a vertex on
+    // all 4,433 open arcs to avoid the guarantee raising one on four - Gibraltar's two and
+    // Macau's two, which are the only arcs on this map that need it - and costs 19 KB of
+    // out-low.json, 0.8%, for nothing the guarantee does not already promise. A blanket floor
+    // is a guess about every ring made from no ring in particular; the guarantee asks the rings.
+    //
+    // So this is where simplification is allowed to start, and the guarantee is what it is not
+    // allowed to finish below. ClosedArcMinimumPoints above is a different kind of thing and
+    // stays: an island simplified to a triangle still encloses ground, so no guarantee would
+    // save it, and 6 is about how much of an island is left rather than whether it is left.
+    private const int OpenArcMinimumPoints = 2;
 
     private const double LowTolerance = 0.01;
 
@@ -460,11 +466,11 @@ internal sealed class ConvertCommand : Command
     // then. An arc already at its length is dropped from the asking, which is also what keeps a
     // ring that can never be saved from being asked about for ever.
     //
-    // On this map it never runs: the floors above are chosen so that nothing collapses, and the
-    // loop confirms it and stops. Forced to run - both floors set to 2, which is what used to
-    // lose eight rings - it raises 577 arcs at 0.001 and 3,682 at 0.01, in one round each, and
-    // every ring stands. That is the only way this has been exercised, since the loop lives
-    // here rather than in a service and nothing unit-tests it.
+    // On this map it raises 4 arcs at 0.01 and none at 0.001, in one round: Gibraltar's border
+    // and coast and Macau's, which are the two rings that come out as a line otherwise. Pushed
+    // harder, with the closed floor at 2 as well, it raises 577 arcs at 0.001 and 3,682 at 0.01,
+    // still in one round each, and every ring stands. The loop lives here rather than in a
+    // service and nothing unit-tests it; the two predicates it rests on are tested.
     private HashSet<(double X, double Y)> SelectRemoved(
         Dictionary<Arc, Coordinate[]> arcs,
         (LinearRing Ring, DirectedArc[] Arcs)[] rings,
