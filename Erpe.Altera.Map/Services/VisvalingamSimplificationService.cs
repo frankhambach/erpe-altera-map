@@ -5,6 +5,7 @@ namespace Erpe.Altera.Map.Services;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Erpe.Altera.Map.Contracts;
 
@@ -34,6 +35,37 @@ public sealed class VisvalingamSimplificationService : ISimplificationService
         }
 
         return SelectRemovedInternal(line, tolerance, floor);
+    }
+
+    public IReadOnlyCollection<(double X, double Y)> SelectRemoved(
+        IReadOnlyCollection<(Coordinate[] Line, int MinimumCount)> lines,
+        double tolerance)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        Dictionary<(double X, double Y), int> carried = [];
+        Dictionary<(double X, double Y), int> offered = [];
+        foreach ((Coordinate[] line, int minimumCount) in lines)
+        {
+            Count(carried, line);
+            Count(offered, this.SelectRemoved(line, tolerance, minimumCount));
+        }
+
+        // Equality rather than a comparison, because a coordinate offered more often than it is
+        // carried would mean this had miscounted, and keeping it is the safe way to be wrong.
+        return [.. offered.Where(pair => pair.Value == carried[pair.Key]).Select(pair => pair.Key)];
+    }
+
+    // Each coordinate once per line, however many times that line carries it, so that a line
+    // running over the same point twice cannot outvote itself.
+    private static void Count(Dictionary<(double X, double Y), int> counts, IEnumerable<Coordinate> coordinates)
+    {
+        foreach ((double X, double Y) point in coordinates
+                     .Select(coordinate => (coordinate.X, coordinate.Y))
+                     .ToHashSet())
+        {
+            counts[point] = counts.GetValueOrDefault(point) + 1;
+        }
     }
 
     private static List<Coordinate> SelectRemovedInternal(Coordinate[] line, double tolerance, int floor)

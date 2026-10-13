@@ -4,6 +4,7 @@
 namespace Erpe.Altera.Map.Tests.Services;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 using Erpe.Altera.Map.Services;
@@ -36,6 +37,76 @@ public class VisvalingamSimplificationServiceTests
 
         removed.Should().HaveCount(3);
         removed.Should().NotContain(line[0]).And.NotContain(line[^1]);
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldKeepTheSharedVertex_WhenOneOfTheLinesCarryingItWillNotGiveItUp()
+    {
+        // The rule the network overload exists for. The long line runs dead straight, so every
+        // vertex on it is worth nothing and it offers all of them up. The short line touches it
+        // at one of those vertices and is held at its floor, so it offers nothing at all - and
+        // it is the one that cannot afford to lose the point, because three points are all it
+        // has.
+        //
+        // This is arc 1477 on the sample map, a five-point island, against arc 9922, 7,777
+        // points of mainland coast that touches it. Pooling the two answers lost the island.
+        Coordinate shared = new Coordinate(2, 0);
+        (Coordinate[] Line, int MinimumCount)[] lines =
+        [
+            ([new Coordinate(0, 0), new Coordinate(1, 0), shared, new Coordinate(3, 0)], 2),
+            ([shared, new Coordinate(2, 1), new Coordinate(3, 1), shared], 6),
+        ];
+
+        IReadOnlyCollection<(double X, double Y)> removed =
+            new VisvalingamSimplificationService().SelectRemoved(lines, 0.5);
+
+        removed.Should().NotContain((shared.X, shared.Y), "the island will not give it up");
+        removed.Should().Contain((1.0, 0.0), "no other line carries that one");
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldRemoveTheSharedVertex_WhenEveryLineCarryingItOffersIt()
+    {
+        // The other half of the rule, and the half that makes borders match: two countries
+        // either side of one line hold the same coordinates, both offer the same ones up, and
+        // both lose them. Keeping a coordinate for one side and not the other is the single
+        // thing this whole scheme exists to prevent.
+        Coordinate shared = new Coordinate(2, 0);
+        (Coordinate[] Line, int MinimumCount)[] lines =
+        [
+            ([new Coordinate(0, 0), new Coordinate(1, 0), shared, new Coordinate(4, 0)], 2),
+            ([new Coordinate(0, 0), shared, new Coordinate(3, 0), new Coordinate(4, 0)], 2),
+        ];
+
+        new VisvalingamSimplificationService().SelectRemoved(lines, 0.5)
+            .Should()
+            .Contain((shared.X, shared.Y));
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldKeepAnEnd_WhenAnotherLineOffersItFromItsOwnInterior()
+    {
+        // Ends used to be put back by a pass of their own. They no longer need one: a line
+        // never offers up its own ends, so a node is always declined by somebody however
+        // freely another line gives away the same point from the middle of itself.
+        Coordinate node = new Coordinate(2, 0);
+        (Coordinate[] Line, int MinimumCount)[] lines =
+        [
+            ([new Coordinate(0, 0), new Coordinate(1, 0), node, new Coordinate(3, 0)], 2),
+            ([node, new Coordinate(2, 5), new Coordinate(2, 9)], 2),
+        ];
+
+        new VisvalingamSimplificationService().SelectRemoved(lines, 0.5)
+            .Should()
+            .NotContain((node.X, node.Y));
+    }
+
+    [Test]
+    public void SelectRemoved_ShouldThrowArgumentNullException_WhenTheLinesAreNull()
+    {
+        Action action = () => new VisvalingamSimplificationService().SelectRemoved(null!, 0.5);
+
+        action.Should().Throw<ArgumentNullException>();
     }
 
     [Test]

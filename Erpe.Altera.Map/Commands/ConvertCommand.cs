@@ -52,6 +52,22 @@ internal sealed class ConvertCommand : Command
     // no more of the small islands than they did.
     private const int ClosedArcMinimumPoints = 6;
 
+    // How many points to leave an arc that does not close on itself, whatever the tolerance
+    // says. Two is its own two nodes and nothing in between, which is a straight line, and a
+    // ring made of k such arcs comes out as a k-gon over its nodes: at k of two that is a line
+    // and the shape is gone. Gibraltar is one border arc and one coast arc and vanished whole at
+    // 0.01, taking the country with it; Macau is the same two-arc shape and came out as three
+    // points on one line.
+    //
+    // Three leaves every open arc a vertex of its own, so a ring of k arcs keeps 2k points
+    // rather than k. With the rule in 6d that a coordinate goes only if every arc carrying it
+    // offers it, that takes the rings lost to simplification from eight to none, and it costs
+    // 676 of the 1,082,750 coordinates dropped at 0.01, which is 0.06%.
+    //
+    // It is not a proof. Three points can still lie on one line, and only a floor derived from
+    // the ring rather than from the arc could promise otherwise. Nothing on this map needs it.
+    private const int OpenArcMinimumPoints = 3;
+
     private const double LowTolerance = 0.01;
 
     private const double MediumTolerance = 0.001;
@@ -402,30 +418,22 @@ internal sealed class ConvertCommand : Command
     // set. Dropping by coordinate rather than by position is what carries the decision to
     // both sides of a border: each side holds the same coordinates, so each side loses the
     // same ones.
+    //
+    // All the arcs in one call, because the rule that settles a shared coordinate needs to see
+    // every arc that carries it. There used to be a second pass here putting the nodes back
+    // afterwards; the rule covers them and it is gone.
     private HashSet<(double X, double Y)> SelectRemoved(Dictionary<Arc, Coordinate[]> arcs, double tolerance)
     {
-        HashSet<(double X, double Y)> removed = [];
-        foreach ((Arc arc, Coordinate[] line) in arcs)
-        {
-            foreach (Coordinate coordinate in this.simplificationService.SelectRemoved(
-                         line,
-                         tolerance,
-                         arc.IsClosed ? ClosedArcMinimumPoints : 2))
-            {
-                removed.Add((coordinate.X, coordinate.Y));
-            }
-        }
-
-        // A node is where arcs meet, and the arc it belongs to never offers one up. Another
-        // arc may still carry the same coordinate somewhere in its interior though, and
-        // dropping it there would take the junction with it.
-        foreach (Coordinate[] line in arcs.Values)
-        {
-            removed.Remove((line[0].X, line[0].Y));
-            removed.Remove((line[^1].X, line[^1].Y));
-        }
-
-        return removed;
+        return
+        [
+            .. this.simplificationService.SelectRemoved(
+                [
+                    .. arcs.Select(
+                        pair => (pair.Value,
+                            pair.Key.IsClosed ? ClosedArcMinimumPoints : OpenArcMinimumPoints)),
+                ],
+                tolerance),
+        ];
     }
 
     // The countries with those coordinates taken out of them, and with whatever that leaves
