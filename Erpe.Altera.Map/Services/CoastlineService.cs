@@ -12,6 +12,7 @@ using Erpe.Altera.Map.Models;
 
 using NetTopologySuite.Algorithm;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Prepared;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.OverlayNG;
 
@@ -65,6 +66,24 @@ public sealed class CoastlineService : ICoastlineService
     // How far past the shore to clip, in SVG units: about 6 m, far below the drawing's own
     // resolution of roughly 1.75 units between points.
     private const double ClipMargin = 1E-3;
+
+    // How much of a tracer has to lie within that margin of the shore before the run is a
+    // border drawn along the water's edge rather than one that merely ends at it.
+    //
+    // A border reaching the coast crosses the margin at some angle and loses a sliver of its
+    // last segment to it, and the shallower the approach the longer that sliver - the bound is
+    // the margin over the sine of the angle, so it is a property of the drawing and not a
+    // defect. Measured over the 321 tracers that lose anything at all to the margin on this
+    // map: 304 lose under 0.01 units, a tail of 8 reaches 0.093, which is an approach of half a
+    // degree, and then the nine runs that follow the shore start again at 0.159 and go to 1.415.
+    //
+    // So this sits in a gap of 1.7x rather than in an empty decade, and what makes it safe is
+    // the geometry either side of it rather than the width of the gap: below it is one segment's
+    // worth of crossing the shore, above it a stretch drawn along the shore. Clipping without a
+    // minimum at all was measured and is not harmless - it cuts 350 tracers, and the welding
+    // that re-attaches them then leaves Lebanon and Osurfine with no geometry and fuses Abeline
+    // and Osurfine into one face.
+    private const double MinimumShoreRun = 0.1;
 
     // How close a run of shoreline has to come back to where it started to count as having
     // doubled back on itself. It is also the most that filling one can move the shoreline,
@@ -126,6 +145,7 @@ public sealed class CoastlineService : ICoastlineService
         }
 
         List<Polygon> lakes = [];
+        List<Coordinate[]> shells = [];
         List<(double Radius, double Length)> slits = [];
         List<double> keptInlets = [];
         int lakeCount = 0;
@@ -138,9 +158,9 @@ public sealed class CoastlineService : ICoastlineService
             // Only the shells. A gap enclosed in a lake is a hole of the lake's own and not
             // what this is for, and the sign that tells a slit from a spit is the other way
             // round on a ring that bounds water rather than land.
-            arcGraph.AddArc(
-                ArcKind.Coast,
-                this.coordinateSequenceFactory.Create(FillSlits(polygon.Shell, slits, keptInlets)));
+            Coordinate[] shell = FillSlits(polygon.Shell, slits, keptInlets);
+            shells.Add(shell);
+            arcGraph.AddArc(ArcKind.Coast, this.coordinateSequenceFactory.Create(shell));
 
             foreach (LinearRing hole in polygon.Holes)
             {
@@ -177,6 +197,8 @@ public sealed class CoastlineService : ICoastlineService
         }
 
         (int clipped, double removed) = this.ClipTracers(arcGraph, lakes);
+        (int shoreClipped, double shoreRemoved, int stranded, double discarded) =
+            this.ClipShoreRuns(arcGraph, shells);
 
         Log.Information(
             "Built {ShellCount} coast shells, kept {LakeCount} lakes and discarded {GapCount} holes as gaps, "
@@ -197,6 +219,18 @@ public sealed class CoastlineService : ICoastlineService
                 "Discarded {CrossedCount} of those holes as gaps because a border runs through them rather than "
                 + "merely into them, which the area to length ratio had taken for water.",
                 crossedCount);
+        }
+
+        if (shoreClipped > 0)
+        {
+            Log.Information(
+                "Cut {Clipped} tracers back off the shore, {Removed:0.00} units of line drawn along the water's "
+                + "edge rather than up to it, and dropped {Stranded} pieces of {Discarded:0.00} units that the "
+                + "cut left seaward of the coast.",
+                shoreClipped,
+                shoreRemoved,
+                stranded,
+                discarded);
         }
 
         if (slits.Count > 0)
@@ -462,6 +496,148 @@ public sealed class CoastlineService : ICoastlineService
         }
 
         return (clipped, removed);
+    }
+
+    // A border drawn along the coast rather than up to it is the same defect as a border drawn
+    // through a lake, and it arrives by a different route. 2c-ter fills the slits that open onto
+    // the sea, but a slit the fill will not take survives in the shell as a hairline needle, and
+    // where a tracer was drawn along the same line the shore and the border carry it twice over.
+    // Both then bound the faces traced there, which is a segment three rings use at once: Khumer
+    // and Siam over 1.4 units of one, Namiba over 0.5 of another. The two slits behind those
+    // miss the fill for different reasons - one comes back after 0.64 units, under its minimum
+    // of 1, and the other never comes back within 0.74 of its mouth, over its maximum of 0.5.
+    //
+    // Cut against the shore as the coast arcs carry it, which is after the slits are filled.
+    // Cutting against the shells instead would take the borders that run up a filled slit, and
+    // those are the real borders 2c-ter exists to give back.
+    //
+    // Unlike a lake, the water here is not forbidden ground: the sea's edge is a line a border
+    // legitimately ends at, and the coast is where it should. So only a run along the edge is
+    // cut, and only one longer than MinimumShoreRun, which is what separates a border drawn in
+    // the water from one crossing the margin on its way to the shore.
+    //
+    // What the cut leaves seaward of the coast bounds nothing and goes with it. One piece does
+    // on this map, 0.4766 units past the tip of the needle it was drawn along.
+    private (int Clipped, double Removed, int Stranded, double Discarded) ClipShoreRuns(
+        ArcGraph arcGraph,
+        List<Coordinate[]> shells)
+    {
+        STRtree<(Coordinate Start, Coordinate End)> shore = new STRtree<(Coordinate, Coordinate)>();
+        STRtree<IPreparedGeometry> land = new STRtree<IPreparedGeometry>();
+        PreparedGeometryFactory factory = new PreparedGeometryFactory();
+        foreach (Coordinate[] shell in shells)
+        {
+            Polygon polygon = this.geometryFactory.CreatePolygon(shell);
+            land.Insert(polygon.EnvelopeInternal, factory.Create(polygon));
+            for (int i = 0; i < (shell.Length - 1); ++i)
+            {
+                shore.Insert(new Envelope(shell[i], shell[i + 1]), (shell[i], shell[i + 1]));
+            }
+        }
+
+        Arc[] originals = arcGraph.Arcs.ToArray();
+        arcGraph.Arcs.Clear();
+        int clipped = 0;
+        double removed = 0.0;
+        int stranded = 0;
+        double discarded = 0.0;
+        foreach (Arc arc in originals)
+        {
+            if (arc.Kind is not (ArcKind.Border or ArcKind.Substate))
+            {
+                arcGraph.Arcs.Add(arc);
+                continue;
+            }
+
+            Coordinate[] coordinates = arc.GetFullCoordinates();
+            LineString line = this.geometryFactory.CreateLineString(coordinates);
+            Geometry margin = this.GetShoreMargin(coordinates, shore);
+            Geometry trimmed = margin.IsEmpty ? line : line.Difference(margin);
+            double run = line.Length - trimmed.Length;
+            if (run < MinimumShoreRun)
+            {
+                arcGraph.Arcs.Add(arc);
+                continue;
+            }
+
+            ++clipped;
+            removed += run;
+
+            // One by one, because a border drawn along the shore is a defect in the source map
+            // rather than something this pipeline should have to carry: the slit the two share
+            // is two shapes disagreeing about where the coast is, and the remedy is to draw them
+            // the same.
+            Coordinate at = line.Intersection(margin).Coordinates[0];
+            Log.Warning(
+                "{Kind} arc {ArcId} runs along the coast for {Run:0.####} units from {X:0.##}, {Y:0.##}. The "
+                + "shore there is a slit the border was drawn along; the stretch in the water was cut out.",
+                arc.Kind,
+                arc.Id,
+                run,
+                at.X,
+                at.Y);
+
+            foreach (LineString piece in GetLines(trimmed).Where(piece => piece.NumPoints >= 2))
+            {
+                if (!this.IsOnLand(piece, land))
+                {
+                    ++stranded;
+                    discarded += piece.Length;
+                    continue;
+                }
+
+                arcGraph.AddArc(
+                    arc.Kind,
+                    GetNode(arcGraph, arc, piece.GetCoordinateN(0)),
+                    GetNode(arcGraph, arc, piece.GetCoordinateN(piece.NumPoints - 1)),
+                    this.coordinateSequenceFactory.Create(piece.Coordinates[1..^1]));
+            }
+        }
+
+        return (clipped, removed, stranded, discarded);
+    }
+
+    // The shore near one tracer, grown into the margin the tracer is cut against. Gathered per
+    // segment rather than over the tracer's whole envelope, so that a border running past a bay
+    // pulls in the shore it actually runs along and not the far side of the water.
+    private Geometry GetShoreMargin(
+        Coordinate[] coordinates,
+        STRtree<(Coordinate Start, Coordinate End)> shore)
+    {
+        HashSet<(Coordinate Start, Coordinate End)> near = [];
+        for (int i = 0; i < (coordinates.Length - 1); ++i)
+        {
+            Envelope envelope = new Envelope(coordinates[i], coordinates[i + 1]);
+            envelope.ExpandBy(ClipMargin);
+            foreach ((Coordinate Start, Coordinate End) segment in shore.Query(envelope))
+            {
+                near.Add(segment);
+            }
+        }
+
+        return near.Count == 0
+            ? LineString.Empty
+            : this.geometryFactory
+                .CreateMultiLineString(
+                    [.. near.Select(segment => this.geometryFactory.CreateLineString([segment.Start, segment.End]))])
+                .Buffer(ClipMargin);
+    }
+
+    // Which side of the shore a piece of a cut tracer lies on. It cannot cross the margin it was
+    // cut against, so one point on it answers for all of it - the midpoint of its first segment,
+    // since an end of it sits on the margin's own edge where the answer is a coin toss.
+    //
+    // The shells, holes and all: a hole in the land is either a lake, which the tracers have
+    // already been clipped against, or a gap 2c discarded, and the ground a discarded gap
+    // covers is land again.
+    private bool IsOnLand(LineString piece, STRtree<IPreparedGeometry> land)
+    {
+        Coordinate first = piece.GetCoordinateN(0);
+        Coordinate second = piece.GetCoordinateN(1);
+        Point point = this.geometryFactory.CreatePoint(
+            new Coordinate((first.X + second.X) / 2.0, (first.Y + second.Y) / 2.0));
+
+        return land.Query(point.EnvelopeInternal).Any(shell => shell.Contains(point));
     }
 
     // How far the tracers run through a hole, against the hole's own half-perimeter. For a

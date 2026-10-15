@@ -237,6 +237,115 @@ public class CoastlineServiceTests
         action.Should().Throw<ArgumentNullException>();
     }
 
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldCutTheTracerBack_WhenItIsDrawnAlongASlitInTheShore(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The border between the two shapes, drawn down the left wall of the slit they leave
+        // where they reach the sea. The slit comes back after 0.81 units, under the 1 unit the
+        // fill asks for, so it stays in the shell - and the border and the shore then carry the
+        // same 0.4 units twice over, which is a segment three rings use at once.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create([new Coordinate(50.0, 0.0), new Coordinate(50.0, 20.0)]));
+
+        new CoastlineService(geometryFactory).AddArcs(CreateShapesWithASlit(geometryFactory), arcGraph);
+
+        Arc border = arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Border).Subject;
+        border.GetFullCoordinates()[0].Y.Should().BeApproximately(0.4, 0.01, "the stretch in the water is gone");
+        border.GetFullCoordinates()[^1].Y.Should().Be(20.0, "the stretch inland is not the cut's to take");
+        arcGraph.Arcs.Should()
+            .ContainSingle(arc => arc.Kind == ArcKind.Coast)
+            .Which.GetFullCoordinates()
+            .Should()
+            .Contain(
+                coordinate => coordinate.Equals2D(new Coordinate(50.0, 0.4)),
+                "the shore keeps the slit; it is the border that was drawn in the water");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldLeaveTheTracerWhole_WhenItOnlyEndsAtTheShore(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // A border reaching the coast crosses the margin the cut is made against and loses a
+        // sliver of its last segment to it. That is every border that reaches the sea, and
+        // pulling them all back by a hair was measured to cost two countries their geometry.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create([new Coordinate(25.0, 0.0), new Coordinate(25.0, 20.0)]));
+
+        new CoastlineService(geometryFactory).AddArcs(CreateShapesWithASlit(geometryFactory), arcGraph);
+
+        arcGraph.Arcs.Should()
+            .ContainSingle(arc => arc.Kind == ArcKind.Border)
+            .Which.GetFullCoordinates()[0]
+            .Equals2D(new Coordinate(25.0, 0.0))
+            .Should()
+            .BeTrue("the end is on the shore, which is where a border should end");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldDropThePiece_WhenTheCutLeavesItSeawardOfTheCoast(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The same border, drawn a unit out to sea before it comes ashore and runs up the slit.
+        // Cutting the run out leaves that unit with the water on both sides of it, bounding
+        // nothing, so it goes with the run rather than being left to dangle.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create(
+                [new Coordinate(50.0, -1.0), new Coordinate(50.0, 0.0), new Coordinate(50.0, 20.0)]));
+
+        new CoastlineService(geometryFactory).AddArcs(CreateShapesWithASlit(geometryFactory), arcGraph);
+
+        arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Border);
+        arcGraph.Arcs.Where(arc => arc.Kind == ArcKind.Border)
+            .SelectMany(arc => arc.GetFullCoordinates())
+            .Should()
+            .OnlyContain(coordinate => coordinate.Y > 0.0);
+    }
+
+    // Two shapes that meet along x = 50 and part company where they reach the sea at y = 0,
+    // leaving a wedge 0.1 units wide at the mouth and 0.4 deep. The union walks up the left
+    // wall and back down the right, which is a slit in the shell 0.81 units long.
+    private static Polygon[] CreateShapesWithASlit(GeometryFactory geometryFactory)
+    {
+        return
+        [
+            geometryFactory.CreatePolygon(
+                geometryFactory.CreateLinearRing(
+                    [
+                        new Coordinate(0.0, 0.0),
+                        new Coordinate(50.0, 0.0),
+                        new Coordinate(50.0, 100.0),
+                        new Coordinate(0.0, 100.0),
+                        new Coordinate(0.0, 0.0),
+                    ])),
+            geometryFactory.CreatePolygon(
+                geometryFactory.CreateLinearRing(
+                    [
+                        new Coordinate(50.1, 0.0),
+                        new Coordinate(100.0, 0.0),
+                        new Coordinate(100.0, 100.0),
+                        new Coordinate(50.0, 100.0),
+                        new Coordinate(50.0, 0.4),
+                        new Coordinate(50.1, 0.0),
+                    ])),
+        ];
+    }
+
     private static GeometryFactory CreateGeometryFactory(CoordinateSequenceFactory coordinateSequenceFactory)
     {
         // Matches the fixed model Program.cs installs, rather than letting the fixture
