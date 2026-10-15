@@ -24,6 +24,13 @@ Taken from `Altera_Data_Generating_Map(13).svg`. Re-run the checks in Phase 7
 against each new export; the thresholds below are derived from these numbers, not
 guessed.
 
+A second export, `Altera_Data_Generating_Map_20261014.svg`, is now in use. Where the first
+export's third to fifth decimals took only a handful of values, as though the coordinates
+had been put on a sub-unit lattice before writing, the second carries the drawing as it was
+drawn. That finer geometry is what brought out **2c-quater** and **3b-bis** below, and both
+of those passages carry their own figures and say which export they come from. Everything
+else here is still the first export's and has not been re-measured against the second.
+
 | Property | Value |
 |---|---|
 | `Rim` x-extent | 6128.3 units for 360° of longitude |
@@ -367,7 +374,21 @@ internal borders are discarded — those come from the tracers.
 **2a.** Build country polygons as today: `TopologyService.Close` → `Unloop` →
 `Polygonize`. The self-intersection machinery is still needed here.
 
-**2b.** `land = UnaryUnionNG(all country polygons)`.
+**2b.** `land = UnaryUnionNG(the unitary and federated states' polygons)`.
+
+**Not every country's polygons, because a federal state's ground is drawn twice over**:
+once as its own shape in `Country_Shapes` and once as the federated states that make it up
+in `Substate_Shapes`. Unioning both versions means the coast along such a state can come
+from either drawing, and where the two disagree it comes from whichever was drawn further
+out — the shape and its own subdivisions would have to be reconciled before the sea could be
+found. The federated states are the finer drawing, and the ones Phase 6 assembles the
+substate layer from, so they are what the coast follows. Unitary states have no
+subdivisions and are unaffected, which is why the test is on the country's type rather than
+on the layer an element was read from.
+
+The assumption is that the two layers agree about where the land is: should a federal state
+ever carry ground that none of its federated states cover, that ground is now outside the
+coastline rather than inside it.
 
 **2c.** Take `land`'s rings:
 
@@ -494,6 +515,62 @@ sign that tells a slit from a spit is the other way round on a ring that bounds 
 slit straddling a ring's own first vertex would be cut in part rather than whole, since the
 closing vertex is never removed; nothing detects that case, so it is not known whether this
 map has one.
+
+**2c-quater. Cut a tracer off the shore where it was drawn along it.** 2c-bis forbids a
+tracer the whole inside of a lake. The sea cannot be forbidden the same way, because its
+edge is a line a border legitimately *ends* at — and 2c-ter does not catch every slit, so
+some of those edges are hairline needles with a border drawn down them. Where that happens
+the shore and the border carry the same ground twice, both bound the faces traced there,
+and the result is a segment three rings use at once: on the second export **Khumer and Siam
+over 1.4 units of one and Namiba over 0.5 of another**.
+
+The two slits behind those miss 2c-ter for different reasons, which is worth knowing before
+anyone widens it: one comes back after 0.64 units, under the 1 unit of travel the fill asks
+for, and the other never comes back within 0.74 units of its mouth, over the 0.5 it allows.
+Neither is a near miss in the ratio — at 4e-05 and 7e-05 they are hairlines — and the
+second misses the width by 10%, so a wider fill would take it. The fill's width is also the
+most it may move the shoreline, so the border is the thing to cut rather than the coast.
+
+So: difference each tracer against the shore **as the coast arcs carry it**, grown by
+`ClipMargin`. After the fill, not before — clipping against the shells themselves would
+cut the borders that run up a *filled* slit, and those are the real borders 2c-ter exists
+to give back. Then drop whatever the cut leaves seaward of the coast, since it bounds
+nothing: one piece does on this map, 0.4766 units past the tip of the needle it was drawn
+along.
+
+**The minimum run is what makes this safe, and it is not optional.** A border reaching the
+coast crosses the margin at some angle and loses a sliver of its last segment to it, the
+shallower the approach the longer the sliver. Measured over the 321 tracers that lose
+anything at all to the margin: 304 lose under 0.01 units, a tail of 8 reaches 0.093 — an
+approach of half a degree — and then the nine runs that follow the shore start again at
+0.159 and go to 1.415. `MinimumShoreRun` sits in that gap. It is 1.7x and not an empty
+decade, and what makes it safe is the geometry either side rather than the width of it:
+below is one segment's worth of crossing the shore, above is a stretch drawn along it.
+
+Cutting with no minimum at all was tried and is not merely pointless but harmful: it cuts
+350 tracers, and the welding that then re-attaches all those pulled-back ends leaves
+**Lebanon and Osurfine with no geometry**, fuses **Abeline and Osurfine** into one 5,300
+unit² face, and takes the arcs that separate nothing from 4 to 7.
+
+Measured on the second export, against the same run without this step:
+
+| | before | after |
+| --- | --- | --- |
+| segments used by three or more rings | 2, and 1 at 0.001 | **0 at every tolerance** |
+| segments used twice by one country, substate layer | 1 | **0** |
+| closed arcs dropped in 4g for retracing themselves | 1 | **0**, none is made |
+| arcs dropped as duplicates in 4c | 78 | 72 |
+| faces traced | 7005 | 7004 |
+| land inside a face | 5,854,539.8 | 5,854,540.0 of 5,855,297.0 |
+| the run | 95 s | 99 s |
+
+9 tracers are cut, 4.04 units of line in all. 25 of the 1223 countries move and the largest
+moves by 0.0036%, which is the border going to where it leaves the water. **The needles
+themselves stay**: the one segment the sharing check still reports as used twice by one
+country, Dematia's at 19.2042, 14.9752, is a needle with no border drawn along it, so there
+is nothing here to cut. Taking that one out means taking the needle out of the shell, which
+is 2c-ter's job and a separate change. Chernorus had the other of the two and it is gone
+after 3b-bis, which is as far as that one was chased.
 
 **2d.** Coast rings need splitting at the points where Phase 3 attaches a tracer
 endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the noder
@@ -681,6 +758,59 @@ and that one is Bopedi's. Countries with no geometry fall from 3 to **2**, the f
 countries claim at once from 7 to **6**, the arcs that separate nothing from 31 to **30**;
 Bopedi comes back with 43,551 against 43,387 expected and Kovenda falls to 54,179 against
 54,005. Nothing else on the map moves.
+
+**3b-bis. A split that lands on a vertex belongs to that vertex.** Splitting an arc puts the
+new node in place of the vertex at the far end of the segment it splits — the piece before
+the split carries the vertices up to that segment and then lets the node stand for the next
+one. That is deliberate, and it is how a weld pulls an arc over onto the end it is taking.
+It also means **the far vertex is discarded**, so which segment the split is expressed
+against decides which vertex goes.
+
+A split point that lands on a vertex can be written either way: as the far end of the
+segment before it, or the near end of the segment after it. The two are the same point, but
+only the first stands for the vertex it is actually on. The second stands for the *next*
+vertex along and throws that one away, moving the border by up to a whole drawn segment for
+a weld that should have moved nothing at all.
+
+That is not a corner case. On the second export, of the 375 ends that weld onto an arc at no
+distance at all, **336 land on a vertex the arc already has**, and 165 of those were written
+the second way: the vertex each one discarded sat a median 0.61 units off, 91 of them more
+than half a unit, the worst **4.14**. Counting the ends whose nearest point on an arc is a
+vertex rather than a point inside a segment — the same mistake with the end off to one side
+— it is **747 of the 2672 splits**, which the weld now reports every run.
+
+**Which 165 it was came out of the order the segment index handed its candidates back in**,
+because the search kept the last of several at the same distance. That order changes
+whenever an arc is added or removed anywhere, so replacing nine arcs on one coast for
+2c-quater moved borders hundreds of units away from them — Gurkha and Rumud at 4510, 1848,
+390 units from the nearest cut, and two more pairs of landlocked countries. It took an arc
+dump either side of the change to see it: the first reading was that the clip had moved
+ground, which it had not. The tie is now broken on the arc's identifier, then the segment,
+then the parameter, for the same reason 4c keeps the lowest identifier of a duplicate pair —
+the same graph has to reduce the same way whatever else has changed.
+
+Measured on the second export, against the same run without this fix:
+
+| | before | after |
+| --- | --- | --- |
+| sub-grid stubs the splitting leaves, taken in 4e | 23 open, 24 closed | **6 and 6** |
+| crossings to node in 4a | 154 | 145 |
+| land inside a face | 5,854,534.4 | **5,854,539.8** of 5,855,297.0 |
+| segments shared exactly from both sides | 270,668 | **270,836** |
+| segments used twice by one country | 2 | **1** |
+| unaccounted boundary | 3 segments | unchanged |
+
+It moves the output, which is the point: 512 of the 1223 countries change, 497 of them by
+under 0.27% and the largest, Karasa, by 1.36% of its 0.46 square degrees, while the total
+land moves by +0.0116 of 21,560.77 square degrees. That is ground going back where it
+belongs rather than appearing, since every restored vertex is a kink one neighbour gains and
+the other gives up. It does **not** fix the segments three rings use — those are 2c-quater's.
+
+A split on an arc's own first vertex has no segment before it and comes out with a segment
+index of −1, which the piece builder reads as an empty piece between the arc's start node
+and the new one: the geometry is kept whole and the zero-length piece is contracted away in
+4e. Nothing on this map does it, but only just — the earliest of the 165 lands on segment 1,
+one segment short of it — so the arithmetic has to hold rather than merely not be reached.
 
 **3c. River-mouth weld — dropped. Not needed for this input.**
 
