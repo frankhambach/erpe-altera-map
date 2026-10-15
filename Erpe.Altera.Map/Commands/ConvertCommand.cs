@@ -756,7 +756,9 @@ internal sealed class ConvertCommand : Command
             .ToArray();
 
         double enclosedArea = this.coastlineService.AddArcs(
-            countries.SelectMany(country => country.Shapes).Select(shape => shape.Polygon),
+            countries.Where(country => country.Type != CountryType.FederalState)
+                .SelectMany(country => country.Shapes)
+                .Select(shape => shape.Polygon),
             arcGraph);
 
         this.correctionService.Weld(arcGraph, MergeTolerance, SplitTolerance);
