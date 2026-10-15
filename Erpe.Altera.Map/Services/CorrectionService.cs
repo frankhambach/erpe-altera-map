@@ -206,12 +206,17 @@ public sealed class CorrectionService : ICorrectionService
         // them. Querying an index built before that would search stale positions.
         STRtree<Segment> index = BuildSegmentIndex(arcGraph);
 
+        // Below this, a split point and a vertex of the arc it splits are the same point, so
+        // the split has to be expressed against that vertex rather than past it. See CreateSplit.
+        double grid = 1.0 / this.geometryFactory.PrecisionModel.Scale;
+
         List<Split> splits = new List<Split>();
         List<Node> unresolved = new List<Node>();
         int coastCount = 0;
+        int vertexCount = 0;
         foreach (Node node in GetLooseEnds(arcGraph))
         {
-            Split? split = FindSplit(index, node, splitTolerance);
+            Split? split = FindSplit(index, node, splitTolerance, grid);
             if (split == null)
             {
                 unresolved.Add(node);
@@ -223,6 +228,12 @@ public sealed class CorrectionService : ICorrectionService
             {
                 ++coastCount;
             }
+
+            // The parameter is clamped to the segment, so this is the far end of it exactly.
+            if (split.Value.Parameter >= 1.0)
+            {
+                ++vertexCount;
+            }
         }
 
         ApplySplits(arcGraph, splits);
@@ -230,14 +241,15 @@ public sealed class CorrectionService : ICorrectionService
         Log.Information(
             "Welded {MergedCount} ends onto each other within {MergeTolerance} units, dropped {CollapsedCount} "
             + "tracers the merge closed onto nothing wider than itself, and split {SplitCount} arcs within "
-            + "{SplitTolerance} to take the rest, {CoastCount} of those on the coast. {UnresolvedCount} ends "
-            + "remain loose.",
+            + "{SplitTolerance} to take the rest, {CoastCount} of those on the coast and {VertexCount} on a "
+            + "vertex the arc already had. {UnresolvedCount} ends remain loose.",
             mergedCount,
             mergeTolerance,
             collapsedCount,
             splits.Count,
             splitTolerance,
             coastCount,
+            vertexCount,
             unresolved.Count);
 
         // Reported rather than forced: an end that nothing lies near is a drawing problem,
@@ -246,7 +258,7 @@ public sealed class CorrectionService : ICorrectionService
         // end fell and what it was probably meant to meet.
         foreach (Node node in unresolved)
         {
-            Split? nearest = FindSplit(index, node, ReportingRadius);
+            Split? nearest = FindSplit(index, node, ReportingRadius, grid);
             Log.Warning(
                 "Arc end {NodeId} at {X:0.##}, {Y:0.##} found nothing within {Tolerance} units. "
                 + "Nearest is {Kind} at {Distance:0.##} units.",
@@ -834,7 +846,7 @@ public sealed class CorrectionService : ICorrectionService
     //
     // Measured over the 2669 loose ends of the sample map, allowing this changes exactly one of
     // them, which is that one.
-    private static Split? FindSplit(STRtree<Segment> index, Node node, double weldTolerance)
+    private static Split? FindSplit(STRtree<Segment> index, Node node, double weldTolerance, double grid)
     {
         Envelope envelope = new Envelope(node.Coordinate);
         envelope.ExpandBy(weldTolerance);
@@ -853,14 +865,76 @@ public sealed class CorrectionService : ICorrectionService
                 node.Coordinate,
                 segment.Coordinates[segment.Index],
                 segment.Coordinates[segment.Index + 1]);
-            if (distance <= bestDistance)
+            if (distance > bestDistance)
+            {
+                continue;
+            }
+
+            Split candidate = CreateSplit(segment, node, parameter, distance, grid);
+            if ((distance < bestDistance) || (best == null) || IsPreferred(candidate, best.Value))
             {
                 bestDistance = distance;
-                best = new Split(segment.Arc, segment.Index, parameter, distance, node);
+                best = candidate;
             }
         }
 
         return best;
+    }
+
+    // Which vertex of the arc the split stands for, and why it cannot be the far one when the
+    // split point is the near one.
+    //
+    // `AddPiece` builds the piece before a split out of the vertices up to the split's segment
+    // and then lets the node stand for the vertex at the far end of that segment, which is what
+    // lets a weld pull the arc over onto the end it is taking. It also means the far vertex is
+    // discarded, so which segment the split is expressed against decides which vertex goes.
+    //
+    // A split point that lands on a vertex can be written either way - as the far end of the
+    // segment before it or the near end of the segment after it - and the two are the same
+    // point, but only the first stands for the vertex it is actually on. The second stands for
+    // the *next* vertex along and throws that away instead, which moves the border by up to a
+    // whole drawn segment for a weld that should have moved nothing at all.
+    //
+    // This is not a corner: of the 375 ends that weld onto an arc at no distance at all on this
+    // map, 336 land on a vertex the arc already has, and 165 of those used to be written the
+    // second way. The vertex each of them discarded sat a median 0.61 units away, 91 of them
+    // more than half a unit and the worst 4.14 - and which 165 it was came out of the order the
+    // segment index happened to hand its candidates back in, so replacing nine arcs anywhere on
+    // the map moved borders hundreds of units away from them.
+    //
+    // The grid is the right band to ask within, since below it the two points are one point as
+    // far as everything downstream is concerned.
+    //
+    // A split on the arc's own first vertex has no segment before it and comes out with a
+    // segment index of -1, which `AddPiece` reads as an empty piece between the arc's start node
+    // and the new one: the geometry is kept whole and the zero length piece between two
+    // coincident nodes is contracted away in 4e. Nothing on this map does it, but only just -
+    // the earliest of the 165 lands on segment 1, one segment short of it - so the arithmetic
+    // has to hold rather than merely not be reached.
+    private static Split CreateSplit(Segment segment, Node node, double parameter, double distance, double grid)
+    {
+        double length = segment.Coordinates[segment.Index].Distance(segment.Coordinates[segment.Index + 1]);
+        return (parameter * length) <= grid
+            ? new Split(segment.Arc, segment.Index - 1, 1.0, distance, node)
+            : new Split(segment.Arc, segment.Index, parameter, distance, node);
+    }
+
+    // Which of two splits exactly as far from the node to take. A node on a vertex two arcs
+    // share, or where two arcs cross, has several segments at the same distance from it, and
+    // the index hands them back in the order it packed them into its tree - which changes
+    // whenever an arc is added or removed anywhere, so an answer taken from that order is not
+    // an answer about the map. The arcs' own identifiers are, and the duplicate rule in 4c
+    // already leans on them for the same reason: the same graph has to reduce the same way.
+    private static bool IsPreferred(Split candidate, Split current)
+    {
+        if (candidate.Arc.Id != current.Arc.Id)
+        {
+            return candidate.Arc.Id < current.Arc.Id;
+        }
+
+        return candidate.SegmentIndex != current.SegmentIndex
+            ? candidate.SegmentIndex < current.SegmentIndex
+            : candidate.Parameter < current.Parameter;
     }
 
     private static (double Distance, double Parameter) GetDistance(

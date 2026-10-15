@@ -184,6 +184,55 @@ public class CorrectionServiceWeldTests
 
     [AutoCustomizedData]
     [Test]
+    public void Weld_ShouldKeepTheVertexPastIt_WhenAnEndLandsOnAVertexOfTheArc(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The split node stands for the vertex at the far end of the segment it splits, which
+        // is how a weld pulls an arc onto the end it takes. An end landing on a vertex has
+        // nothing to pull, so it has to be expressed against the segment that ends there -
+        // written against the one that starts there instead, it stands for the next vertex
+        // along and that vertex is lost.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (15, 8), (30, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, 0), (10, 20)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
+
+        arcGraph.Arcs.Should().HaveCount(3, "the arc is cut in two where the stem lands on it");
+        arcGraph.Arcs.SelectMany(arc => arc.GetFullCoordinates())
+            .Should()
+            .Contain(
+                coordinate => coordinate.Equals2D(new Coordinate(15.0, 8.0)),
+                "the vertex past the split is not the weld's to take");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Weld_ShouldSplitTheLowerArc_WhenTwoArcsAreTheSameDistanceFromTheEnd(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Two arcs crossing at a vertex they both carry are both at no distance at all from an
+        // end sitting there, so the choice has to come from the arcs rather than from the order
+        // the segment index hands them back in - that order changes whenever an arc is added
+        // anywhere on the map.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (10, 0), (20, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, -10), (10, 0), (10, 10)]);
+        AddArc(arcGraph, coordinateSequenceFactory, [(10, 0), (5, 5)]);
+
+        CreateService(coordinateSequenceFactory).Weld(arcGraph, 1.0, 1.0);
+
+        arcGraph.Arcs.Should().HaveCount(4, "only one of the two is cut");
+        arcGraph.Arcs.Should()
+            .ContainSingle(arc => arc.GetFullCoordinates().Length == 3)
+            .Which.GetFullCoordinates()[0]
+            .Equals2D(new Coordinate(10.0, -10.0))
+            .Should()
+            .BeTrue("the arc that keeps all three coordinates is the one added second");
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Weld_ShouldDropTheStubAndSplitForItsNeighbour_WhenAStubCollapses(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
