@@ -27,9 +27,17 @@ guessed.
 A second export, `Altera_Data_Generating_Map_20261014.svg`, is now in use. Where the first
 export's third to fifth decimals took only a handful of values, as though the coordinates
 had been put on a sub-unit lattice before writing, the second carries the drawing as it was
-drawn. That finer geometry is what brought out **2c-quater** and **3b-bis** below, and both
-of those passages carry their own figures and say which export they come from. Everything
-else here is still the first export's and has not been re-measured against the second.
+drawn. That finer geometry is what brought out **2c-quater**, **2c-quinquies** and **3b-bis**
+below, and each of those passages carries its own figures and says which export they come
+from. Everything else here is still the first export's and has not been re-measured against
+the second.
+
+The second export has itself been corrected once in place, on 15 October, where a tracer
+that was missing had left Iveria and Ossetia sharing a face. The three passages' figures are
+from the file as it stands after that correction; they moved when it arrived — arcs that
+separate nothing fell from 4 to 1, two countries got their geometry back and the count went
+from 1223 to 1225 — which is the reason each of them says what it was measured against
+rather than only what it measured.
 
 | Property | Value |
 |---|---|
@@ -547,10 +555,18 @@ approach of half a degree — and then the nine runs that follow the shore start
 decade, and what makes it safe is the geometry either side rather than the width of it:
 below is one segment's worth of crossing the shore, above is a stretch drawn along it.
 
-Cutting with no minimum at all was tried and is not merely pointless but harmful: it cuts
-350 tracers, and the welding that then re-attaches all those pulled-back ends leaves
-**Lebanon and Osurfine with no geometry**, fuses **Abeline and Osurfine** into one 5,300
-unit² face, and takes the arcs that separate nothing from 4 to 7.
+Cutting with no minimum at all was tried and is not merely pointless but harmful: it cuts all
+321, and the welding that then re-attaches those pulled-back ends leaves **Lebanon and
+Osurfine with no geometry**, fuses **Abeline and Osurfine** into one face of 5,300 units², and
+takes the arcs that separate nothing from 1 to 4. That was re-measured against this pipeline
+rather than the one it was written for, because 3b-bis has since removed one of the reasons it
+hurt and the question was whether the minimum is still load-bearing. It is.
+
+It also found a crash of its own, in the line that reports where a run is: at a minimum of
+1e-09 the overlay rounds a 0.0011 unit run away to an empty intersection, and reading the
+first coordinate of that threw. Unreachable at 0.1 — the run is by definition what the
+difference removed — but the report is not the thing that should fail if the figure is ever
+lowered, so it no longer does.
 
 Measured on the second export, against the same run without this step:
 
@@ -558,19 +574,72 @@ Measured on the second export, against the same run without this step:
 | --- | --- | --- |
 | segments used by three or more rings | 2, and 1 at 0.001 | **0 at every tolerance** |
 | segments used twice by one country, substate layer | 1 | **0** |
-| closed arcs dropped in 4g for retracing themselves | 1 | **0**, none is made |
 | arcs dropped as duplicates in 4c | 78 | 72 |
-| faces traced | 7005 | 7004 |
+| faces traced | 7007 | 7006 |
 | land inside a face | 5,854,539.8 | 5,854,540.0 of 5,855,297.0 |
-| the run | 95 s | 99 s |
+| the run | 98 s | 100 s |
 
-9 tracers are cut, 4.04 units of line in all. 25 of the 1223 countries move and the largest
-moves by 0.0036%, which is the border going to where it leaves the water. **The needles
-themselves stay**: the one segment the sharing check still reports as used twice by one
-country, Dematia's at 19.2042, 14.9752, is a needle with no border drawn along it, so there
-is nothing here to cut. Taking that one out means taking the needle out of the shell, which
-is 2c-ter's job and a separate change. Chernorus had the other of the two and it is gone
-after 3b-bis, which is as far as that one was chased.
+9 tracers are cut, 4.04 units of line in all, and one piece of 0.4766 units is dropped past
+the tip of the needle it was drawn along. 25 of the 1225 countries move and the largest moves
+by 0.0036%, which is the border going to where it leaves the water.
+
+**The needles themselves stay**, and that is 2c-quinquies' work rather than this one's: this
+cuts the border that was drawn along a needle, not the needle. Dematia's, the last segment
+the sharing check reported as used twice by one country, has no border along it at all.
+
+**2c-quinquies. Cut the needles out of the rings themselves.** A ring that leaves a vertex,
+goes somewhere and comes back to within a hair of it without enclosing anything on the way
+has drawn one line twice rather than gone round something. Nothing is on the far side of such
+a run, so whatever is assembled from the ring walks its own line out and back — which is what
+the sharing check reports as **a segment used twice by one country**, and on the second export
+that was Dematia's 0.4685 units of **lake shore** at 3526.82, 2176.64, out and straight back
+to within 0.0002 units of where it set out. Two shapes disagreeing about the water's edge by
+a millimetre on the ground.
+
+**A lake shore is where these are, and that is not luck.** It is the same defect 2c-ter fills
+on a shell, arriving where 2c-ter cannot see it: the fill only ever repairs shells, so it has
+already taken the thin slits off those and what survives on a shell is the fat ones it
+refuses — while nothing has ever been taken off a hole. All five needles the scan finds in
+the written arcs are lake shores.
+
+The run is replaced by the vertex it set out from, which is what 2c-ter does with a slit, and
+no winding test is needed to do it: a run that encloses nothing encloses nothing on either
+side, so unlike a slit it does not matter which side the water is on. That is what lets one
+rule serve the shells and the holes alike.
+
+**The return tolerance is what replaces 2c-ter's minimum length.** The fill asks for a unit of
+travel before it will take a run, because under that a ring's own jitter qualifies — 51,541
+runs of two drawn segments folding onto each other — and Dematia's needle travels 0.937, so a
+length minimum would miss it. What makes one unnecessary here is that the run has to come back
+to within `MaximumNeedleReturn` rather than within half a unit: jitter does not return to
+where it set out from, it wanders on. At 2c-ter's half unit it would, and 267 runs that
+enclose exactly nothing over 0.04 units would go with it — which would be removing the
+drawing. The five needles return to within 0.0002, 0.00036, 0.00103, 0.00106 and 0.00275
+units, so ten times the widest of those is the tolerance.
+
+What a run may enclose is then the discriminator, and it is measured: over the 2466 runs that
+come back within the tolerance, five enclose between **9.2e-06 and 1.005e-04**, the next
+encloses **8.733e-04**, and the rest run up to 0.95. `MaximumNeedleRatio` sits at the middle
+of that gap on a log scale, 3x either side.
+
+Measured on the second export, against the same run without this step:
+
+| | before | after |
+| --- | --- | --- |
+| segments used twice by one country | 1 | **0 at every tolerance**, the first time |
+| the run | 98 s | 100 s |
+
+6 needles are cut, 2.1967 units of line, the longest running 0.937 units and the widest
+enclosing 1.3e-04. Six rather than the five the written arcs show, because welding splits the
+rings afterwards and a needle across a split is no longer one run. 9 of the 1225 countries
+move, each losing a vertex or two, the largest by 0.0002%, and the total land moves by
++0.000037 of 21,560.78 square degrees — which is what a needle encloses: nothing.
+
+The search looks 5 units ahead rather than 2c-ter's 50, because a needle is one line drawn
+twice and the longest here runs 0.937 units. That is worth 4 seconds of the run, and **the
+longest needle cut is reported every run for exactly this reason**: a figure creeping up
+towards 5 is the sign that the search is being cut short. Like 2c-ter, this does not wrap, so
+a needle straddling a ring's own first vertex would be cut in part rather than whole.
 
 **2d.** Coast rings need splitting at the points where Phase 3 attaches a tracer
 endpoint. Easiest to defer: feed whole coast rings into Phase 3 and let the noder
@@ -772,14 +841,14 @@ only the first stands for the vertex it is actually on. The second stands for th
 vertex along and throws that one away, moving the border by up to a whole drawn segment for
 a weld that should have moved nothing at all.
 
-That is not a corner case. On the second export, of the 375 ends that weld onto an arc at no
-distance at all, **336 land on a vertex the arc already has**, and 165 of those were written
-the second way: the vertex each one discarded sat a median 0.61 units off, 91 of them more
+That is not a corner case. On the second export, of the 374 ends that weld onto an arc at no
+distance at all, **334 land on a vertex the arc already has**, and 167 of those were written
+the second way: the vertex each one discarded sat a median 0.60 units off, 91 of them more
 than half a unit, the worst **4.14**. Counting the ends whose nearest point on an arc is a
 vertex rather than a point inside a segment — the same mistake with the end off to one side
-— it is **747 of the 2672 splits**, which the weld now reports every run.
+— it is **746 of the 2672 splits**, which the weld now reports every run.
 
-**Which 165 it was came out of the order the segment index handed its candidates back in**,
+**Which 167 it was came out of the order the segment index handed its candidates back in**,
 because the search kept the last of several at the same distance. That order changes
 whenever an arc is added or removed anywhere, so replacing nine arcs on one coast for
 2c-quater moved borders hundreds of units away from them — Gurkha and Rumud at 4510, 1848,
@@ -793,23 +862,29 @@ Measured on the second export, against the same run without this fix:
 
 | | before | after |
 | --- | --- | --- |
-| sub-grid stubs the splitting leaves, taken in 4e | 23 open, 24 closed | **6 and 6** |
-| crossings to node in 4a | 154 | 145 |
-| land inside a face | 5,854,534.4 | **5,854,539.8** of 5,855,297.0 |
-| segments shared exactly from both sides | 270,668 | **270,836** |
-| segments used twice by one country | 2 | **1** |
+| sub-grid stubs the splitting leaves, taken in 4e | 16 open, 17 closed | **3 and 3** |
+| crossings to node in 4a | 143 | 136 |
+| land inside a face | 5,854,534.5 | **5,854,540.0** of 5,855,297.0 |
+| segments shared exactly from both sides | 270,853 | **271,023** |
 | unaccounted boundary | 3 segments | unchanged |
 
-It moves the output, which is the point: 512 of the 1223 countries change, 497 of them by
-under 0.27% and the largest, Karasa, by 1.36% of its 0.46 square degrees, while the total
-land moves by +0.0116 of 21,560.77 square degrees. That is ground going back where it
+It moves the output, which is the point: 520 of the 1225 countries change, 457 of them by
+under 0.3% and the largest, Karasa, by 1.3605% of its 0.46 square degrees, while the total
+land moves by +0.0119 of 21,560.77 square degrees. That is ground going back where it
 belongs rather than appearing, since every restored vertex is a kink one neighbour gains and
 the other gives up. It does **not** fix the segments three rings use — those are 2c-quater's.
+
+Two rows this table used to carry have gone, and both say something: it took the segments used
+twice by one country from 2 to 1, and it stopped 4g having to drop an arc that retraced
+itself. 2c-quinquies now takes the needles behind both of those before the weld ever sees
+them, so against the pipeline as it now stands this fix changes neither — the figures above
+are measured against the current code with only this fix taken out, not against the pipeline
+as it was when the fix was written.
 
 A split on an arc's own first vertex has no segment before it and comes out with a segment
 index of −1, which the piece builder reads as an empty piece between the arc's start node
 and the new one: the geometry is kept whole and the zero-length piece is contracted away in
-4e. Nothing on this map does it, but only just — the earliest of the 165 lands on segment 1,
+4e. Nothing on this map does it, but only just — the earliest of the 167 lands on segment 1,
 one segment short of it — so the arithmetic has to hold rather than merely not be reached.
 
 **3c. River-mouth weld — dropped. Not needed for this input.**
