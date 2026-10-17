@@ -41,7 +41,9 @@ public sealed class TracerService : ITracerService
         {
             ArcKind kind = TracerLayers[layerElement.ID];
             foreach (CoordinateSequence coordinateSequence in layerElement.Descendants()
-                         .Where(element => element is SvgPath or SvgLine or SvgRectangle or SvgPolygon)
+                         .Where(element =>
+                             element is SvgPath or SvgLine or SvgRectangle or SvgPolygon
+                             && (!element.TryGetAttribute("display", out string? display) || (display != "none")))
                          .SelectMany(element => this.svgApproximationService.Approximate(element))
                          .Where(coordinateSequence => coordinateSequence.Count >= 2))
             {
