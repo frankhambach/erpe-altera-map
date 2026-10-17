@@ -895,10 +895,10 @@ public sealed class CorrectionService : ICorrectionService
     // the *next* vertex along and throws that away instead, which moves the border by up to a
     // whole drawn segment for a weld that should have moved nothing at all.
     //
-    // This is not a corner: of the 375 ends that weld onto an arc at no distance at all on this
-    // map, 336 land on a vertex the arc already has, and 165 of those used to be written the
-    // second way. The vertex each of them discarded sat a median 0.61 units away, 91 of them
-    // more than half a unit and the worst 4.14 - and which 165 it was came out of the order the
+    // This is not a corner: of the 374 ends that weld onto an arc at no distance at all on this
+    // map, 334 land on a vertex the arc already has, and 167 of those used to be written the
+    // second way. The vertex each of them discarded sat a median 0.60 units away, 91 of them
+    // more than half a unit and the worst 4.14 - and which 167 it was came out of the order the
     // segment index happened to hand its candidates back in, so replacing nine arcs anywhere on
     // the map moved borders hundreds of units away from them.
     //
@@ -909,7 +909,7 @@ public sealed class CorrectionService : ICorrectionService
     // segment index of -1, which `AddPiece` reads as an empty piece between the arc's start node
     // and the new one: the geometry is kept whole and the zero length piece between two
     // coincident nodes is contracted away in 4e. Nothing on this map does it, but only just -
-    // the earliest of the 165 lands on segment 1, one segment short of it - so the arithmetic
+    // the earliest of the 167 lands on segment 1, one segment short of it - so the arithmetic
     // has to hold rather than merely not be reached.
     private static Split CreateSplit(Segment segment, Node node, double parameter, double distance, double grid)
     {

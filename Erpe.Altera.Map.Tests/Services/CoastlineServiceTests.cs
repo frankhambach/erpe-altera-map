@@ -239,6 +239,53 @@ public class CoastlineServiceTests
 
     [AutoCustomizedData]
     [Test]
+    public void AddArcs_ShouldCutTheNeedle_WhenALakeShoreDrawsOneLineTwice(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // Two shapes disagreeing about the water's edge by 0.0002 units leave the lake shore
+        // walking half a unit out and back, which encloses 5e-05 over a run of 1. Whatever is
+        // assembled from the ring then walks that half unit twice, once in each direction,
+        // which is Dematia's segment used twice by one country.
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreateLakeWithANeedle(geometryFactory, 0.0002)],
+            arcGraph);
+
+        arcGraph.Arcs.Should()
+            .ContainSingle(arc => arc.Kind == ArcKind.Lake)
+            .Which.GetFullCoordinates()
+            .Should()
+            .NotContain(
+                coordinate => coordinate.Equals2D(new Coordinate(44.5, 50.0)),
+                "the tip of the needle is the only vertex that was out there");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepTheRun_WhenALakeShoreComesBackRoundSomething(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The same run 0.02 units wide rather than 0.0002, which encloses 0.005 over the same
+        // run of 1 and is a shape rather than a line drawn twice. A ring comes back on itself
+        // all over this map and almost always has something inside it when it does.
+        new CoastlineService(geometryFactory).AddArcs([CreateLakeWithANeedle(geometryFactory, 0.02)], arcGraph);
+
+        arcGraph.Arcs.Should()
+            .ContainSingle(arc => arc.Kind == ArcKind.Lake)
+            .Which.GetFullCoordinates()
+            .Should()
+            .Contain(
+                coordinate => coordinate.Equals2D(new Coordinate(44.5, 50.0)),
+                "what the run encloses is what says whether it is a needle");
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void AddArcs_ShouldCutTheTracerBack_WhenItIsDrawnAlongASlitInTheShore(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
@@ -315,6 +362,27 @@ public class CoastlineServiceTests
             .SelectMany(arc => arc.GetFullCoordinates())
             .Should()
             .OnlyContain(coordinate => coordinate.Y > 0.0);
+    }
+
+    // A 10 by 10 lake, fat enough for 2c to keep as water, whose shore runs half a unit west
+    // from 45, 50 and comes back `width` units away from where it set out.
+    private static Polygon CreateLakeWithANeedle(GeometryFactory geometryFactory, double width)
+    {
+        return geometryFactory.CreatePolygon(
+            CreateRing(geometryFactory, 0, 0, 100, 100),
+            [
+                geometryFactory.CreateLinearRing(
+                    [
+                        new Coordinate(40.0, 40.0),
+                        new Coordinate(50.0, 40.0),
+                        new Coordinate(50.0, 50.0),
+                        new Coordinate(45.0, 50.0),
+                        new Coordinate(44.5, 50.0),
+                        new Coordinate(45.0, 50.0 + width),
+                        new Coordinate(40.0, 50.0),
+                        new Coordinate(40.0, 40.0),
+                    ]),
+            ]);
     }
 
     // Two shapes that meet along x = 50 and part company where they reach the sea at y = 0,

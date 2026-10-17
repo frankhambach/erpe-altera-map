@@ -67,6 +67,44 @@ public sealed class CoastlineService : ICoastlineService
     // resolution of roughly 1.75 units between points.
     private const double ClipMargin = 1E-3;
 
+    // How close a run of ring has to come back to where it started to count as having doubled
+    // back on itself rather than gone round something.
+    //
+    // The five needles on this map return to within 0.0002, 0.00036, 0.00103, 0.00106 and
+    // 0.00275 units of where they set out, which is two shapes disagreeing about the water's
+    // edge by between a millimetre and two centimetres on the ground. Ten times the widest of
+    // those leaves room for a worse drawing without reaching anything real: the next run in,
+    // which returns exactly and is kept, is told apart by what it encloses rather than by this.
+    //
+    // It cannot be loosened much further, and 2c-ter's 0.5 units is far too loose for a test
+    // with no length behind it: at half a unit a ring's own jitter qualifies, 267 runs that
+    // enclose exactly nothing over 0.04 units, which is two drawn segments folding onto each
+    // other. Removing those would be removing the drawing.
+    private const double MaximumNeedleReturn = 0.03;
+
+    // What such a run may enclose, as area over the length of the loop it closes, before it is a
+    // shape rather than a needle.
+    //
+    // Measured over the 2466 runs that come back within the tolerance above: five enclose
+    // between 9.2e-06 and 1.005e-04, the next encloses 8.733e-04, and the rest run up to 0.95.
+    // This sits at the middle of that gap on a log scale, 3x above the widest needle and 3x
+    // below the narrowest ring that is kept.
+    //
+    // All five are lake shores, and that is not luck: 2c-ter has already taken the shells'
+    // thin slits, so what is left on a shell is the fat ones it would not fill, while nothing
+    // has ever been taken off a hole.
+    private const double MaximumNeedleRatio = 3E-4;
+
+    // How far ahead to look for the way back, which is what keeps this scan off the whole of a
+    // ring that can run to 118,800 points. 2c-ter looks 50 units ahead because a slit can be
+    // long; a needle is one line drawn twice and the longest here runs 0.937 units, so five
+    // times that is ample. Measured: the scan costs about 3 seconds of a 100 second run at this
+    // bound and about 7 at 2c-ter's 50, for the same six needles.
+    //
+    // The longest needle cut is reported every run for this reason: a figure creeping up
+    // towards this one is the sign that the search is being cut short.
+    private const double MaximumNeedleSearch = 5.0;
+
     // How much of a tracer has to lie within that margin of the shore before the run is a
     // border drawn along the water's edge rather than one that merely ends at it.
     //
@@ -80,9 +118,11 @@ public sealed class CoastlineService : ICoastlineService
     // So this sits in a gap of 1.7x rather than in an empty decade, and what makes it safe is
     // the geometry either side of it rather than the width of the gap: below it is one segment's
     // worth of crossing the shore, above it a stretch drawn along the shore. Clipping without a
-    // minimum at all was measured and is not harmless - it cuts 350 tracers, and the welding
-    // that re-attaches them then leaves Lebanon and Osurfine with no geometry and fuses Abeline
-    // and Osurfine into one face.
+    // minimum at all was measured and is not harmless - it cuts all 321, and the welding that
+    // re-attaches those pulled-back ends leaves Lebanon and Osurfine with no geometry, fuses
+    // Abeline and Osurfine into one face of 5300 units and takes the arcs that separate nothing
+    // from 1 to 4. Re-measured against this pipeline rather than the one it was written for,
+    // since 3b-bis has since taken out one of the reasons it hurt.
     private const double MinimumShoreRun = 0.1;
 
     // How close a run of shoreline has to come back to where it started to count as having
@@ -147,6 +187,7 @@ public sealed class CoastlineService : ICoastlineService
         List<Polygon> lakes = [];
         List<Coordinate[]> shells = [];
         List<(double Radius, double Length)> slits = [];
+        List<(double Radius, double Length)> needles = [];
         List<double> keptInlets = [];
         int lakeCount = 0;
         int gapCount = 0;
@@ -158,7 +199,9 @@ public sealed class CoastlineService : ICoastlineService
             // Only the shells. A gap enclosed in a lake is a hole of the lake's own and not
             // what this is for, and the sign that tells a slit from a spit is the other way
             // round on a ring that bounds water rather than land.
-            Coordinate[] shell = FillSlits(polygon.Shell, slits, keptInlets);
+            // Needles after the slits rather than before, so that a run the fill leaves behind
+            // is still asked about. Neither makes work for the other on this map.
+            Coordinate[] shell = RemoveNeedles(FillSlits(polygon.Shell, slits, keptInlets), needles);
             shells.Add(shell);
             arcGraph.AddArc(ArcKind.Coast, this.coordinateSequenceFactory.Create(shell));
 
@@ -189,8 +232,11 @@ public sealed class CoastlineService : ICoastlineService
                 }
                 else
                 {
-                    arcGraph.AddArc(ArcKind.Lake, hole.CoordinateSequence);
-                    lakes.Add(this.geometryFactory.CreatePolygon(hole));
+                    // A lake shore is where the needles are: 2c only ever asked this ring
+                    // whether it was water, and nothing has taken anything off it since.
+                    Coordinate[] shore = RemoveNeedles(hole.CoordinateSequence.ToCoordinateArray(), needles);
+                    arcGraph.AddArc(ArcKind.Lake, this.coordinateSequenceFactory.Create(shore));
+                    lakes.Add(this.geometryFactory.CreatePolygon(this.geometryFactory.CreateLinearRing(shore)));
                     ++lakeCount;
                 }
             }
@@ -249,6 +295,18 @@ public sealed class CoastlineService : ICoastlineService
                 slits.Max(slit => slit.Length),
                 slits.Max(slit => slit.Radius),
                 keptInlets.Count == 0 ? MaximumGapAreaToLengthRatio : keptInlets.Min());
+        }
+
+        if (needles.Count > 0)
+        {
+            Log.Information(
+                "Cut {Needles} needles out of the coast and lake rings, {Length:0.####} units of line a ring had "
+                + "already drawn once, the longest of them {Longest:0.####} units and the widest measuring "
+                + "{Widest:0.0e+0} on the area to length ratio the rings are judged by.",
+                needles.Count,
+                needles.Sum(needle => needle.Length),
+                needles.Max(needle => needle.Length),
+                needles.Max(needle => needle.Radius));
         }
 
         if (ambiguousCount > 0)
@@ -371,6 +429,89 @@ public sealed class CoastlineService : ICoastlineService
             }
 
             slits.Add((radius, length));
+            coordinates.RemoveRange(i + 1, found - i);
+        }
+
+        return [.. coordinates];
+    }
+
+    // A ring that leaves a vertex, goes somewhere and comes back to within a hair of it without
+    // enclosing anything on the way has drawn one line twice rather than gone round something.
+    // Nothing is on the far side of such a run, so whatever is assembled from the ring walks its
+    // own line out and back - which is the segment the sharing check reports as used twice by one
+    // country, Dematia's 0.47 units of lake shore at 3526.82, 2176.64.
+    //
+    // It is the same defect 2c-ter fills on a shell, arriving where 2c-ter cannot see it. The
+    // fill asks for a unit of travel before it will take a run, because under that a shell's own
+    // jitter qualifies - 51,541 runs of two drawn segments folding onto each other - and
+    // Dematia's needle travels 0.937. What makes a length minimum unnecessary here is that the
+    // run has to come back to within MaximumNeedleReturn rather than within half a unit: jitter
+    // does not return to where it set out from, it wanders on.
+    //
+    // The run is replaced by the vertex it set out from, so the ring loses the needle and keeps
+    // everything either side of it. This also runs on the lake rings, which is where all five of
+    // the needles on this map are, and needs no winding test to do it: a run that encloses
+    // nothing encloses nothing on either side, so unlike a slit it does not matter which side
+    // the water is on.
+    //
+    // Known limitation, shared with 2c-ter: a needle straddling the ring's own first vertex is
+    // cut in part rather than whole, because the closing vertex is never removed and the scan
+    // does not wrap.
+    private static Coordinate[] RemoveNeedles(Coordinate[] ring, List<(double Radius, double Length)> needles)
+    {
+        List<Coordinate> coordinates = [.. ring];
+        int i = 0;
+        while (i < (coordinates.Count - 2))
+        {
+            int found = -1;
+            double radius = 0.0;
+            double length = 0.0;
+            double run = 0.0;
+            double area = 0.0;
+            for (int j = i + 1; j < (coordinates.Count - 1); ++j)
+            {
+                run += coordinates[j - 1].Distance(coordinates[j]);
+                area += (coordinates[j - 1].X * coordinates[j].Y) - (coordinates[j].X * coordinates[j - 1].Y);
+                if (run > MaximumNeedleSearch)
+                {
+                    break;
+                }
+
+                if ((j == (i + 1)) || (coordinates[i].Distance(coordinates[j]) > MaximumNeedleReturn))
+                {
+                    continue;
+                }
+
+                // Closed before the area is taken, for the same reason 2c-ter closes its loop:
+                // the shoelace terms are twice the signed area of a triangle with the origin, so
+                // an unclosed chain out at x = 3526 carries a residual thousands of times the
+                // needle itself.
+                double enclosed = Math.Abs(
+                        area + ((coordinates[j].X * coordinates[i].Y) - (coordinates[i].X * coordinates[j].Y)))
+                    / 2.0;
+                double ratio = enclosed / run;
+                if (ratio <= MaximumNeedleRatio)
+                {
+                    found = j;
+                    radius = ratio;
+                    length = run;
+                }
+
+                // The first return and no other, as in 2c-ter: a needle's two legs are next to
+                // each other in the ring, so the first place it comes back to where it started
+                // is the other leg, and a wider loop further along is not this.
+                break;
+            }
+
+            // A ring needs four coordinates to enclose anything, so a cut that would take it
+            // below that is no cut at all.
+            if ((found < 0) || ((coordinates.Count - (found - i)) < 4))
+            {
+                ++i;
+                continue;
+            }
+
+            needles.Add((radius, length));
             coordinates.RemoveRange(i + 1, found - i);
         }
 
@@ -567,7 +708,12 @@ public sealed class CoastlineService : ICoastlineService
             // rather than something this pipeline should have to carry: the slit the two share
             // is two shapes disagreeing about where the coast is, and the remedy is to draw them
             // the same.
-            Coordinate at = line.Intersection(margin).Coordinates[0];
+            // What the difference took out, which is where the run is. It cannot be empty for a
+            // run over the minimum, since the run is the length the difference removed, but the
+            // report is not the thing that should fail if that minimum is ever lowered: at
+            // 1e-09 it is, on a run of 0.0011 units that the overlay rounds away to nothing.
+            Geometry inWater = line.Intersection(margin);
+            Coordinate at = inWater.IsEmpty ? coordinates[0] : inWater.Coordinates[0];
             Log.Warning(
                 "{Kind} arc {ArcId} runs along the coast for {Run:0.####} units from {X:0.##}, {Y:0.##}. The "
                 + "shore there is a slit the border was drawn along; the stretch in the water was cut out.",
