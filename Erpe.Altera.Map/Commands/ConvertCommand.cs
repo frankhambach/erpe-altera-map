@@ -16,6 +16,7 @@ using System.Threading.Tasks;
 
 using Erpe.Altera.Map.Contracts;
 using Erpe.Altera.Map.Models;
+using Erpe.Altera.Map.Services;
 
 using NetTopologySuite.Features;
 using NetTopologySuite.Geometries;
@@ -674,7 +675,7 @@ internal sealed class ConvertCommand : Command
             .. document.Descendants()
                 .First(element => element.ID == "Rim")
                 .Descendants()
-                .Where(element => element is SvgPath or SvgLine or SvgRectangle or SvgPolygon)
+                .Where(element => element.IsDrawnLinework())
                 .SelectMany(element => this.svgApproximationService.Approximate(element)),
         ];
     }
@@ -723,7 +724,7 @@ internal sealed class ConvertCommand : Command
 
         (string Name, CountryType Type, CoordinateSequence[] CoordinateSequences)[] groupings = (await Task.WhenAll(
                 shapesElements.SelectMany(shapesElement => shapesElement.Descendants())
-                    .Where(element => element is SvgPath or SvgLine or SvgRectangle or SvgPolygon)
+                    .Where(element => element.IsDrawnLinework())
                     .GroupBy(element => GetName(element, shapesElements))
                     .Where(grouping => grouping.Key != null)
                     .Select(async grouping => (grouping.Key!.Value.Name, grouping.Key!.Value.Type,
