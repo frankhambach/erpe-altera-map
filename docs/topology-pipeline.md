@@ -28,7 +28,7 @@ A second export, `Altera_Data_Generating_Map_20261014.svg`, is now in use. Where
 export's third to fifth decimals took only a handful of values, as though the coordinates
 had been put on a sub-unit lattice before writing, the second carries the drawing as it was
 drawn. That finer geometry is what brought out **2c-quater**, **2c-quinquies** and **3b-bis**
-below, and each of those passages carries its own figures and says which export they come
+below, and those three and **1-bis** carry their own figures and say which export they come
 from. Everything else here is still the first export's and has not been re-measured against
 the second.
 
@@ -173,7 +173,8 @@ a total-length test, and make the semantics **collapse, not delete**:
 New `ITracerService` / `TracerService`.
 
 1. Select descendants of `Border_Tracers` and `Substate_Tracers` that are
-   `SvgPath`, `SvgLine`, `SvgPolygon` or `SvgRectangle`.
+   `SvgPath`, `SvgLine`, `SvgPolygon` or `SvgRectangle` **and that the author has not
+   hidden**. See 1-bis.
 2. Flatten with the existing `SvgApproximationService` (`Tolerance = 0.01`).
    `ApproximateClosedPath` only emits the closing point on an explicit
    `SvgClosePathSegment`, so open tracer paths stay open — the name is misleading
@@ -196,6 +197,48 @@ node identifiers stay stable once welding starts removing merged nodes.
 372 substate — on 2873 nodes, matching an independent count of the file exactly. The
 node total is one short of twice the arc count, which confirms the single closed
 subpath is the only one. 26 subpaths are dropped by the 0.1-unit filter.
+
+**1-bis. An element the author has hidden is not part of the map.** `display="none"` is
+how a drawing says "not this", and reading it anyway does not merely add linework — it
+makes work that has to be undone further down. The two hidden paths in `Border_Tracers`
+on the second export are one line drawn twice, a dark stroke and a light one over it,
+both starting at 3833.732666, 1301.5913086, and they were the only two paths at that
+coordinate. 1b was spending its duplicate rule collapsing the second onto the first to
+arrive back where the drawing already was.
+
+Leaving them out, measured against the same run that read them:
+
+| | before | after |
+| --- | --- | --- |
+| duplicated tracer stretches collapsed in 1b | 15, 1036.8 units | 14, 903.3 units |
+| arcs that separate nothing | 1 | **0, and the report no longer fires** |
+| faces traced | 7006 | 7000 |
+| crossings to node in 4a | 136 | 131 |
+| arcs in the topology | 9985 | 9979 |
+
+The 133.5 units the collapse loses are exactly the repeat it used to report, arc 964 on
+arc 372 at that coordinate, so those two rows are one finding seen twice. The arc that
+separated nothing was the **last one left** — 51 points from 3910.41, 1294.84, a chain
+that never closed, 77 units from the pair — and it went with them. Six faces fewer is the
+two copies no longer dividing ground the tracers around them already divide: the land
+inside a face holds at 5,854,540.0 of 5,855,297.0, the countries at 1225, the segments
+used twice by one country at 0, the unaccounted boundary at 3 segments, and no face is
+claimed by two countries by enough to matter.
+
+**The rule belongs to the whole document, not to this phase.** The rim and the country
+shapes are read by two filters of their own in `ConvertCommand`, and all three had the
+same type test written out separately — which is exactly how only one of them came to ask
+about `display`: the rule lived in three copies, so it was changed in one. The four
+element types and the visibility test are now one extension method all three call. Every
+output file is byte-identical across that change, because nothing in the rim or the shapes
+is hidden on this export; it is the three copies that were the defect, not what they
+currently decide.
+
+Known limitation: the rule asks the element and not its ancestors, so linework inside a
+hidden **group** is still read — and hiding a whole layer is what Illustrator does. Both
+hidden elements on this map are paths, so the shape of that case is a guess rather than a
+measurement, and guessing at it is how the three copies got out of step in the first
+place.
 
 ## Phase 1b — collapse duplicated tracers
 
