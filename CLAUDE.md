@@ -25,12 +25,12 @@ C:/Users/frank/.dotnet/dotnet.exe run --project Erpe.Altera.Map/Erpe.Altera.Map.
 
 A full run is about two minutes. Write outputs to the scratchpad, not into the repo.
 
-**The test suite has 44 pre-existing failures** — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests`. They are unrelated to the topology work and have been failing throughout. **44 failing is the baseline**; compare against it rather than expecting zero, and say the total when reporting ("959 passing against the unchanged 44-failure baseline").
+**The test suite has 44 pre-existing failures** — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests`. They are unrelated to the topology work and have been failing throughout. **44 failing is the baseline**; compare against it rather than expecting zero, and say the total when reporting ("966 passing against the unchanged 44-failure baseline").
 
 ## Conventions that will fail the build if ignored
 
 * **Analyzers are errors.** `Erpe.Analyzers` brings StyleCop and Sonar. The ones hit most often: SA1117 (parameters all on one line or each on its own), SA1202/SA1204 (public before private, static before instance), SA1508/SA1513 (blank lines around braces), SA1118 (no multi-line argument), SA1210 (usings ordered), S1144 (no unused private member — so a helper must be used in the same change that adds it), S1244 (no `==` on doubles; use `.Equals` or a range), S3358 (no nested ternary), S6605 (`Array.Exists` over `Any`), S125 (no commented-out code), CA1859, CA2007, CA1822/S2325, VSTHRD110, CA1861.
-* **Every `.cs` file is UTF-8 with a BOM**, and the working tree uses CRLF throughout (`core.autocrlf` is on, so git stores LF either way). `sed -i` and most scripted edits strip the BOM, convert the line endings, or both. Check with `file <path>` after any scripted edit: a lost BOM is a real change to the file, and an LF working-tree copy makes git warn on staging. Markdown has no BOM.
+* **Nearly every `.cs` file is UTF-8 with a BOM** — 53 of the 59 tracked ones — and the working tree uses CRLF throughout (`core.autocrlf` is on, so git stores LF either way). The six without one are `AssemblyInfo.cs`, `IAssemblyService.cs`, `ICorrectionService.cs`, `ITracerService.cs`, `TracerService.cs` and `SvgApproximationServiceTests.cs`; they never had one, so leave them as they are rather than tidying them in passing, and give a new file the BOM. `sed -i` and most scripted edits strip the BOM, convert the line endings, or both — as does the `Write` tool, which emits neither BOM nor CRLF. Check with `file <path>` after writing a file any way other than `Edit`: a lost BOM is a real change, and an LF working-tree copy makes git warn on staging. Markdown has no BOM.
 * **Commits are signed.** Verify with `git log --show-signature -1`.
 * Comments carry the *reasoning and the measurement*, not a restatement of the code. This is the house style and it is why the comments are long. Match it.
 
@@ -70,18 +70,25 @@ Two traps worth knowing:
 
 ## State and open items
 
-Measured on the sample map: every country has geometry, no face is claimed by two countries, no arc separates nothing, no loose arc ends, 0 clockwise shells, every ring survives every tolerance, and the unaccounted boundary is 5 segments (0.000%).
+Measured on `Altera_Data_Generating_Map_20261014.svg`, the export in use since mid-October. **The plan's figures are mostly the first export's and differ**; its preamble says which of its passages were measured against this one.
 
-Open, from the plan's "What is left":
+* **1225 countries** in the national layer and 1577 in the substate layer, every one of them with geometry.
+* **7000 faces** traced, covering 5,854,540.0 of the 5,855,297.0 square units the coastline encloses. 2 unclaimed faces, both absorbed into their neighbours.
+* **No arc separates nothing**, and no arc end is left loose.
+* The sharing check, over 1,356,022 segments: 271,018 shared exactly from both sides, and **0 wound the same way, 0 used twice by one country, 0 used by three or more rings**. 3 segments (0.000%) are unaccounted for.
+* **Every ring survives every tolerance**: 6505 of 6505 in the national layer at 0.001 and at 0.01, the floor raised on 4 arcs to keep it so.
+* **0 clockwise shells and 0 counter-clockwise holes** — 6145 shells and 360 holes, all the right way round. Nothing reports this; it is checked by reading the written file.
 
-* **2 substate segments used three times** — Capital Territory and Falkland, a self-touching ring. The one real defect the sharing check still finds.
-* **5 unaccounted segments** — Agurania 2 over 0.029°, Bruni 3 forming a triangle of 8.5e-8 square degrees. The output's six decimals showing.
-* **3 segments used twice by one country** — two needles inside sound shells and one pair of Nunangats shapes touching along a line that should probably be one shape. Coordinates inside real rings, so removing them would have to happen arc by arc.
-* **4 faces claimed by no country** and reported each run as bordering none, so nothing can absorb them.
-* Two rings enclose nothing before simplification ever runs and are dropped on the way out: Anian's islet drawn *outside* the rim, which the unprojection's clamp at longitude 180 flattens onto the antimeridian, and Namaquab's lake of 1.3e-7 square units. Anian's is a drawing error in the source map and no code here can repair it.
+The run finishes with **no errors**. Its 24 warnings are the per-case reports of what it corrected — 14 duplicated tracer stretches and 9 tracers cut back off the shore, each named with where it is — plus one that is the first open item below.
 
-Known input errors are fixed in the source SVG by the user, not worked around here — duplicate Martinique and Iouanorre shapes went that way, and an island present in the Substates layer but missing from the Country layer is the current example.
+Open:
 
-## Branches
+* **1 hole lands in the band the gap threshold was chosen to avoid**, between 0.10 and 0.19 on the area-to-length ratio, which was empty on the first export. Lakes and gaps are no longer cleanly separated on this one. The plan's 2c says what that figure rests on; it wants watching rather than nudging.
+* **2 faces are claimed by more than one country**, both too small to be reported individually.
+* **3 unaccounted segments**, 0.000% of the boundary. The first export's five were Agurania's 2 and Bruni's 3; these three have not been identified on this export.
+* Two rings enclose nothing before simplification ever runs and are dropped on the way out: **Anian-23's shell** — the islet drawn *outside* the rim, which the unprojection's clamp at longitude 180 flattens onto the antimeridian — and **Namaquab-0's hole 1**. Anian's is a drawing error in the source map and no code here can repair it.
+* **A hidden group would still be read.** The visibility rule in 1-bis asks the element, not its ancestors, and hiding a whole layer is what Illustrator does.
 
-`main` carries everything above. **`coverage-check`** is a local branch holding `IVerificationService.VerifyCoverage` and a fifth debug file, `-uncovered.svg`, which compares the polygons the document was read as against the geometry assembled from them — the one check that does not go through the pipeline's own idea of the map. It found 71.66 square units of 5.77 million drawn and not in the output, 0.00124%, from three unrelated causes. It is unmerged and several commits behind.
+Known input errors are fixed in the source SVG by the user, not worked around here — duplicate Martinique and Iouanorre shapes went that way, as did an island present in the Substates layer but missing from the Country layer, and the tracer whose absence left Iveria and Ossetia sharing a face was drawn on 15 October, which took the arcs separating nothing from 4 to 1. Hiding an element counts as saying it is not part of the map: two hidden paths in `Border_Tracers` took the last of those away.
+
+**The input file is edited in place under the same name.** It changed on 15 October between one measurement and the next, which invalidated a day's figures; check its timestamp before trusting a comparison against an earlier run.
