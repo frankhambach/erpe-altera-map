@@ -19,6 +19,8 @@ using Svg.Pathing;
 
 public sealed class SvgApproximationService : ISvgApproximationService
 {
+    private const double MinimumLength = 0.1;
+
     private const double Tolerance = 0.01;
 
     private readonly CoordinateSequenceFactory coordinateSequenceFactory;
@@ -30,13 +32,8 @@ public sealed class SvgApproximationService : ISvgApproximationService
 
     public IEnumerable<CoordinateSequence> Approximate(SvgElement element)
     {
-        return element switch
-            {
-                SvgPath path => this.ApproximatePath(path),
-                SvgPolygon polygon => [this.ConvertPolygon(polygon)],
-                SvgRectangle rectangle => [this.ConvertRectangle(rectangle)],
-                _ => [],
-            };
+        return this.ApproximateElement(element)
+            .Where(coordinateSequence => GetLength(coordinateSequence) >= MinimumLength);
     }
 
     public IEnumerable<Coordinate> GetCoordinates(SvgPath path)
@@ -277,6 +274,17 @@ public sealed class SvgApproximationService : ISvgApproximationService
         return Math.Sqrt(Math.Pow(endPoint.X - startPoint.X, 2) + Math.Pow(endPoint.Y - startPoint.Y, 2));
     }
 
+    private static double GetLength(CoordinateSequence coordinateSequence)
+    {
+        double length = 0.0;
+        for (int index = 1; index < coordinateSequence.Count; ++index)
+        {
+            length += GetLength(coordinateSequence.GetCoordinate(index - 1), coordinateSequence.GetCoordinate(index));
+        }
+
+        return length;
+    }
+
     private static bool IsSufficientlyFlat(
         Coordinate startPoint,
         Coordinate firstControlPoint,
@@ -313,14 +321,35 @@ public sealed class SvgApproximationService : ISvgApproximationService
             mirror.Y + (mirror.Y >= point.Y ? distanceY : -distanceY));
     }
 
+    private IEnumerable<CoordinateSequence> ApproximateElement(SvgElement element)
+    {
+        return element switch
+            {
+                SvgPath path => this.ApproximatePath(path),
+                SvgLine line => [this.ConvertLine(line)],
+                SvgPolygon polygon => [this.ConvertPolygon(polygon)],
+                SvgRectangle rectangle => [this.ConvertRectangle(rectangle)],
+                _ => [],
+            };
+    }
+
     private IEnumerable<CoordinateSequence> ApproximatePath(SvgPath path)
     {
         return ConvertToAbsolute(path)
             .ChunkBy(pathSegment => pathSegment is SvgMoveToSegment)
             .Select(ApproximateClosedPath)
             .Select(points => points.ToArray())
-            .Where(coordinates => coordinates.Length >= 3)
+            .Where(coordinates => coordinates.Length >= 2)
             .Select(coordinates => this.coordinateSequenceFactory.Create(coordinates));
+    }
+
+    private CoordinateSequence ConvertLine(SvgLine line)
+    {
+        return this.coordinateSequenceFactory.Create(
+            [
+                new Coordinate(line.StartX.Value, line.StartY.Value),
+                new Coordinate(line.EndX.Value, line.EndY.Value),
+            ]);
     }
 
     private CoordinateSequence ConvertPolygon(SvgPolygon polygon)

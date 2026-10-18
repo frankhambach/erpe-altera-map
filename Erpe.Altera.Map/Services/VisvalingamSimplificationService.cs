@@ -5,104 +5,142 @@ namespace Erpe.Altera.Map.Services;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Erpe.Altera.Map.Contracts;
 
 using NetTopologySuite.Geometries;
 
+// Visvalingam-Whyatt, over one open line at a time: take the vertex whose triangle with
+// its two neighbours is smallest, drop it, recompute the two neighbours, and carry on
+// until the smallest triangle left is bigger than the tolerance.
+//
+// Open, not cyclic, because what is simplified here is an arc rather than a ring. The two
+// ends of an arc are nodes, where it meets the arcs around it, and a node that moved or
+// vanished would pull the network apart.
 public sealed class VisvalingamSimplificationService : ISimplificationService
 {
-    private const int MinPoints = 6;
-
-    public Polygon Simplify(Polygon polygon, double tolerance)
+    public IEnumerable<Coordinate> SelectRemoved(Coordinate[] line, double tolerance, int minimumCount)
     {
-        ArgumentNullException.ThrowIfNull(polygon);
-        if (tolerance <= 0)
+        ArgumentNullException.ThrowIfNull(line);
+        if (tolerance <= 0.0)
         {
             throw new ArgumentOutOfRangeException(nameof(tolerance), "Tolerance must be greater than zero.");
         }
 
-        // Exterior ring
-        Coordinate[] exterior = polygon.ExteriorRing.CoordinateSequence.ToCoordinateArray();
-        Coordinate[] simplifiedExterior = SimplifyRing(exterior, tolerance);
-
-        // Interior rings (holes)
-        List<LinearRing> holes = new List<LinearRing>();
-        for (int i = 0; i < polygon.NumInteriorRings; i++)
+        int floor = Math.Max(2, minimumCount);
+        if (line.Length <= floor)
         {
-            Coordinate[] interior = polygon.GetInteriorRingN(i).CoordinateSequence.ToCoordinateArray();
-            Coordinate[] simplifiedInterior = SimplifyRing(interior, tolerance);
-            if (simplifiedInterior.Length >= 4)
-            {
-                // linear ring requires at least 4 coordinates (closed)
-                holes.Add(polygon.Factory.CreateLinearRing(simplifiedInterior));
-            }
+            return [];
         }
 
-        // If exterior got simplified to less than 4 coords, return original polygon to avoid losing it.
-        if (simplifiedExterior.Length < 4)
-        {
-            return polygon;
-        }
-
-        return polygon.Factory.CreatePolygon(polygon.Factory.CreateLinearRing(simplifiedExterior), holes.ToArray());
+        return SelectRemovedInternal(line, tolerance, floor);
     }
 
-    private static Coordinate[] SimplifyRing(Coordinate[] ringCoordinates, double tolerance)
+    public IReadOnlyCollection<(double X, double Y)> SelectRemoved(
+        IReadOnlyCollection<(Coordinate[] Line, int MinimumCount)> lines,
+        double tolerance)
     {
-        if (ringCoordinates.Length == 0)
+        ArgumentNullException.ThrowIfNull(lines);
+
+        Dictionary<(double X, double Y), int> carried = [];
+        Dictionary<(double X, double Y), int> offered = [];
+        foreach ((Coordinate[] line, int minimumCount) in lines)
         {
-            return ringCoordinates;
+            Count(carried, line);
+            Count(offered, this.SelectRemoved(line, tolerance, minimumCount));
         }
 
-        // Remove the duplicate last coordinate for processing (closed ring)
-        bool isClosed = ringCoordinates.Length >= 2 && ringCoordinates[0].Equals2D(ringCoordinates[^1]);
-        List<Coordinate> coordinates = new List<Coordinate>(ringCoordinates);
-        if (isClosed)
+        // Equality rather than a comparison, because a coordinate offered more often than it is
+        // carried would mean this had miscounted, and keeping it is the safe way to be wrong.
+        return [.. offered.Where(pair => pair.Value == carried[pair.Key]).Select(pair => pair.Key)];
+    }
+
+    public (IReadOnlySet<(double X, double Y)> Removed, int Raised, int Rounds) SelectRemoved(
+        IReadOnlyList<(Coordinate[] Line, int MinimumCount)> lines,
+        IReadOnlyList<int[]> rings,
+        Func<int, IReadOnlySet<(double X, double Y)>, bool> survives,
+        double tolerance)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        ArgumentNullException.ThrowIfNull(rings);
+        ArgumentNullException.ThrowIfNull(survives);
+
+        // Through the same floor the single-line overload applies, so that a count of nothing
+        // cannot be doubled to nothing for ever.
+        int[] counts = [.. lines.Select(line => Math.Max(2, line.MinimumCount))];
+        int raised = 0;
+        int rounds = 0;
+        while (true)
         {
-            coordinates.RemoveAt(coordinates.Count - 1);
-        }
-
-        int count = coordinates.Count;
-        if (count <= Math.Max(3, MinPoints))
-        {
-            // Re-add closure and return original
-            return [..coordinates, new Coordinate(coordinates[0])];
-        }
-
-        // Linked-list style arrays
-        int[] previousIndexes = new int[count];
-        int[] nextIndexes = new int[count];
-        bool[] removed = new bool[count];
-        double[] area = new double[count];
-
-        for (int index = 0; index < count; index++)
-        {
-            previousIndexes[index] = (index - 1 + count) % count;
-            nextIndexes[index] = (index + 1) % count;
-            removed[index] = false;
-        }
-
-        for (int index = 0; index < count; index++)
-        {
-            area[index] = TriangleArea(coordinates[previousIndexes[index]], coordinates[index], coordinates[nextIndexes[index]]);
-        }
-
-        // Use a simple priority queue based on SortedSet to pick smallest area
-        SortedSet<(double Area, int Index)> queue = new SortedSet<(double, int)>(
-            Comparer<(double Area, int Index)>.Create((a, b) =>
+            HashSet<(double X, double Y)> removed =
+            [
+                .. this.SelectRemoved(
+                    [.. lines.Select((line, index) => (line.Line, counts[index]))],
+                    tolerance),
+            ];
+            int[] wanting =
+            [
+                .. Enumerable.Range(0, rings.Count)
+                    .Where(ring => !survives(ring, removed))
+                    .SelectMany(ring => rings[ring])
+                    .Distinct()
+                    .Where(line => counts[line] < lines[line].Line.Length),
+            ];
+            if (wanting.Length == 0)
             {
-                int result = a.Area.CompareTo(b.Area);
-                return result != 0 ? result : a.Index.CompareTo(b.Index);
-            }));
+                return (removed, raised, rounds);
+            }
 
-        for (int index = 0; index < count; index++)
+            foreach (int line in wanting)
+            {
+                counts[line] = Math.Min(lines[line].Line.Length, counts[line] * 2);
+            }
+
+            raised += wanting.Length;
+            ++rounds;
+        }
+    }
+
+    // Each coordinate once per line, however many times that line carries it, so that a line
+    // running over the same point twice cannot outvote itself.
+    private static void Count(Dictionary<(double X, double Y), int> counts, IEnumerable<Coordinate> coordinates)
+    {
+        foreach ((double X, double Y) point in coordinates
+                     .Select(coordinate => (coordinate.X, coordinate.Y))
+                     .ToHashSet())
         {
-            queue.Add((area[index], index));
+            counts[point] = counts.GetValueOrDefault(point) + 1;
+        }
+    }
+
+    private static List<Coordinate> SelectRemovedInternal(Coordinate[] line, double tolerance, int floor)
+    {
+        int count = line.Length;
+        int[] previous = new int[count];
+        int[] next = new int[count];
+        bool[] removed = new bool[count];
+        double[] areas = new double[count];
+        for (int i = 0; i < count; ++i)
+        {
+            previous[i] = i - 1;
+            next[i] = i + 1;
+        }
+
+        // Only the interior ever enters the queue, which is how the two ends stay put.
+        SortedSet<(double Area, int Index)> queue = new SortedSet<(double Area, int Index)>(
+            Comparer<(double Area, int Index)>.Create(
+                (first, second) => first.Area.CompareTo(second.Area) != 0
+                    ? first.Area.CompareTo(second.Area)
+                    : first.Index.CompareTo(second.Index)));
+        for (int i = 1; i < (count - 1); ++i)
+        {
+            areas[i] = GetArea(line[i - 1], line[i], line[i + 1]);
+            queue.Add((areas[i], i));
         }
 
         int remaining = count;
-        while (queue.Count > 0 && remaining > Math.Max(3, MinPoints))
+        while ((queue.Count > 0) && (remaining > floor))
         {
             (double Area, int Index) smallest = queue.Min;
             if (smallest.Area >= tolerance)
@@ -112,71 +150,55 @@ public sealed class VisvalingamSimplificationService : ISimplificationService
 
             queue.Remove(smallest);
             int index = smallest.Index;
-            if (removed[index])
-            {
-                continue;
-            }
-
-            // remove idx
             removed[index] = true;
-            remaining--;
+            --remaining;
 
-            int previousIndex = previousIndexes[index];
-            int nextIndex = nextIndexes[index];
-            nextIndexes[previousIndex] = nextIndex;
-            previousIndexes[nextIndex] = previousIndex;
+            int before = previous[index];
+            int after = next[index];
+            next[before] = after;
+            previous[after] = before;
+            Requeue(queue, line, previous, next, areas, removed, before, count);
+            Requeue(queue, line, previous, next, areas, removed, after, count);
+        }
 
-            // update areas for p and nx (if not removed)
-            if (!removed[previousIndex])
+        List<Coordinate> dropped = new List<Coordinate>();
+        for (int i = 1; i < (count - 1); ++i)
+        {
+            if (removed[i])
             {
-                queue.Remove((area[previousIndex], previousIndex));
-                area[previousIndex] = TriangleArea(coordinates[previousIndexes[previousIndex]], coordinates[previousIndex], coordinates[nextIndexes[previousIndex]]);
-                queue.Add((area[previousIndex], previousIndex));
-            }
-
-            if (!removed[nextIndex])
-            {
-                queue.Remove((area[nextIndex], nextIndex));
-                area[nextIndex] = TriangleArea(coordinates[previousIndexes[nextIndex]], coordinates[nextIndex], coordinates[nextIndexes[nextIndex]]);
-                queue.Add((area[nextIndex], nextIndex));
+                dropped.Add(line[i]);
             }
         }
 
-        // Collect remaining coordinates in order starting from 0 following next links until cycle completes
-        List<Coordinate> result = new List<Coordinate>();
-        int start = -1;
-        for (int index = 0; index < count; index++)
-        {
-            if (!removed[index])
-            {
-                start = index;
-                break;
-            }
-        }
-
-        if (start == -1)
-        {
-            // all removed? fallback to original with closure
-            return [..coordinates, new Coordinate(coordinates[0])];
-        }
-
-        int current = start;
-        do
-        {
-            result.Add(new Coordinate(coordinates[current]));
-            current = nextIndexes[current];
-        }
-        while (current != start);
-
-        // Re-close ring
-        result.Add(new Coordinate(result[0]));
-        return result.ToArray();
+        return dropped;
     }
 
-    private static double TriangleArea(Coordinate a, Coordinate b, Coordinate c)
+    private static void Requeue(
+        SortedSet<(double Area, int Index)> queue,
+        Coordinate[] line,
+        int[] previous,
+        int[] next,
+        double[] areas,
+        bool[] removed,
+        int index,
+        int count)
     {
-        // planar triangle area (absolute)
-        double area = Math.Abs(((a.X * (b.Y - c.Y)) + (b.X * (c.Y - a.Y)) + (c.X * (a.Y - b.Y))) / 2.0);
-        return area;
+        if ((index <= 0) || (index >= (count - 1)) || removed[index])
+        {
+            return;
+        }
+
+        queue.Remove((areas[index], index));
+        areas[index] = GetArea(line[previous[index]], line[index], line[next[index]]);
+        queue.Add((areas[index], index));
+    }
+
+    private static double GetArea(Coordinate first, Coordinate second, Coordinate third)
+    {
+        return Math.Abs(
+                (first.X * (second.Y - third.Y))
+                + (second.X * (third.Y - first.Y))
+                + (third.X * (first.Y - second.Y)))
+            / 2.0;
     }
 }

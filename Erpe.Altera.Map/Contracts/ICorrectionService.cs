@@ -11,7 +11,11 @@ using NetTopologySuite.Geometries;
 
 public interface ICorrectionService
 {
+    void Collapse(ArcGraph arcGraph, double duplicateTolerance);
+
     IEnumerable<Gap> FindGaps(IList<Country> countries);
 
     void Snap(IEnumerable<Coordinate> coordinates, double snapTolerance);
+
+    void Weld(ArcGraph arcGraph, double mergeTolerance, double splitTolerance);
 }
