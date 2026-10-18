@@ -76,7 +76,7 @@ public sealed class CoastlineService : ICoastlineService
     // those leaves room for a worse drawing without reaching anything real: the next run in,
     // which returns exactly and is kept, is told apart by what it encloses rather than by this.
     //
-    // It cannot be loosened much further, and 2c-ter's 0.5 units is far too loose for a test
+    // It cannot be loosened much further, and 3c's 0.5 units is far too loose for a test
     // with no length behind it: at half a unit a ring's own jitter qualifies, 267 runs that
     // enclose exactly nothing over 0.04 units, which is two drawn segments folding onto each
     // other. Removing those would be removing the drawing.
@@ -90,16 +90,16 @@ public sealed class CoastlineService : ICoastlineService
     // This sits at the middle of that gap on a log scale, 3x above the widest needle and 3x
     // below the narrowest ring that is kept.
     //
-    // All five are lake shores, and that is not luck: 2c-ter has already taken the shells'
+    // All five are lake shores, and that is not luck: 3c has already taken the shells'
     // thin slits, so what is left on a shell is the fat ones it would not fill, while nothing
     // has ever been taken off a hole.
     private const double MaximumNeedleRatio = 3E-4;
 
     // How far ahead to look for the way back, which is what keeps this scan off the whole of a
-    // ring that can run to 118,800 points. 2c-ter looks 50 units ahead because a slit can be
+    // ring that can run to 118,800 points. 3c looks 50 units ahead because a slit can be
     // long; a needle is one line drawn twice and the longest here runs 0.937 units, so five
     // times that is ample. Measured: the scan costs about 3 seconds of a 100 second run at this
-    // bound and about 7 at 2c-ter's 50, for the same six needles.
+    // bound and about 7 at 3c's 50, for the same six needles.
     //
     // The longest needle cut is reported every run for this reason: a figure creeping up
     // towards this one is the sign that the search is being cut short.
@@ -122,7 +122,7 @@ public sealed class CoastlineService : ICoastlineService
     // re-attaches those pulled-back ends leaves Lebanon and Osurfine with no geometry, fuses
     // Abeline and Osurfine into one face of 5300 units and takes the arcs that separate nothing
     // from 1 to 4. Re-measured against this pipeline rather than the one it was written for,
-    // since 3b-bis has since taken out one of the reasons it hurt.
+    // since 4d has since taken out one of the reasons it hurt.
     private const double MinimumShoreRun = 0.1;
 
     // How close a run of shoreline has to come back to where it started to count as having
@@ -157,7 +157,7 @@ public sealed class CoastlineService : ICoastlineService
     }
 
     // Returns the area the faces traced from this graph have to come to, which is what
-    // Phase 4 checks itself against: the land, plus every hole that was discarded as a gap
+    // step 5 checks itself against: the land, plus every hole that was discarded as a gap
     // since nothing bounds those any more, plus every lake, since a lake is a face of its
     // own as well as a hole in the land around it.
     public double AddArcs(IEnumerable<Polygon> polygons, ArcGraph arcGraph)
@@ -175,7 +175,7 @@ public sealed class CoastlineService : ICoastlineService
                     this.geometryFactory.PrecisionModel))
             .ToArray();
 
-        // Built once, before the holes are judged, and from the tracers as drawn: 2c-bis has
+        // Built once, before the holes are judged, and from the tracers as drawn: 3f has
         // not trimmed them yet, so a border that runs through a gap is still all there.
         STRtree<LineString> tracers = new STRtree<LineString>();
         foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Border or ArcKind.Substate))
@@ -232,7 +232,7 @@ public sealed class CoastlineService : ICoastlineService
                 }
                 else
                 {
-                    // A lake shore is where the needles are: 2c only ever asked this ring
+                    // A lake shore is where the needles are: 3d only ever asked this ring
                     // whether it was water, and nothing has taken anything off it since.
                     Coordinate[] shore = RemoveNeedles(hole.CoordinateSequence.ToCoordinateArray(), needles);
                     arcGraph.AddArc(ArcKind.Lake, this.coordinateSequenceFactory.Create(shore));
@@ -343,7 +343,7 @@ public sealed class CoastlineService : ICoastlineService
     // map that come back on themselves at all, 8778 enclose land and are headlands, spits and
     // narrow capes that have to be left exactly as they are, and 574 enclose sea.
     //
-    // What is left after those three is judged by the hydraulic radius of Phase 2, because a
+    // What is left after those three is judged by the hydraulic radius of 3d, because a
     // gap is a gap whether it is enclosed as a hole or open to the sea. Here, though, that
     // figure is a judgement and not a measurement: those 574 runs have radii running all the
     // way from 0.0005 to 1.0, thickest between 0.07 and 0.12, and they thin out across the
@@ -441,7 +441,7 @@ public sealed class CoastlineService : ICoastlineService
     // own line out and back - which is the segment the sharing check reports as used twice by one
     // country, Dematia's 0.47 units of lake shore at 3526.82, 2176.64.
     //
-    // It is the same defect 2c-ter fills on a shell, arriving where 2c-ter cannot see it. The
+    // It is the same defect 3c fills on a shell, arriving where 3c cannot see it. The
     // fill asks for a unit of travel before it will take a run, because under that a shell's own
     // jitter qualifies - 51,541 runs of two drawn segments folding onto each other - and
     // Dematia's needle travels 0.937. What makes a length minimum unnecessary here is that the
@@ -454,7 +454,7 @@ public sealed class CoastlineService : ICoastlineService
     // nothing encloses nothing on either side, so unlike a slit it does not matter which side
     // the water is on.
     //
-    // Known limitation, shared with 2c-ter: a needle straddling the ring's own first vertex is
+    // Known limitation, shared with 3c: a needle straddling the ring's own first vertex is
     // cut in part rather than whole, because the closing vertex is never removed and the scan
     // does not wrap.
     private static Coordinate[] RemoveNeedles(Coordinate[] ring, List<(double Radius, double Length)> needles)
@@ -482,7 +482,7 @@ public sealed class CoastlineService : ICoastlineService
                     continue;
                 }
 
-                // Closed before the area is taken, for the same reason 2c-ter closes its loop:
+                // Closed before the area is taken, for the same reason 3c closes its loop:
                 // the shoelace terms are twice the signed area of a triangle with the origin, so
                 // an unclosed chain out at x = 3526 carries a residual thousands of times the
                 // needle itself.
@@ -497,7 +497,7 @@ public sealed class CoastlineService : ICoastlineService
                     length = run;
                 }
 
-                // The first return and no other, as in 2c-ter: a needle's two legs are next to
+                // The first return and no other, as in 3c: a needle's two legs are next to
                 // each other in the ring, so the first place it comes back to where it started
                 // is the other leg, and a wider loop further along is not this.
                 break;
@@ -594,7 +594,7 @@ public sealed class CoastlineService : ICoastlineService
             // the lake as drawn leaves it in place: it then appears twice over, once as the
             // lake shore and once as the border, and the face traversal can pick up either.
             // Growing by a hair takes those with it. A border that merely ends at the shore
-            // is pulled back by the same hair and welded onto the ring again in Phase 3.
+            // is pulled back by the same hair and welded onto the ring again in step 4.
             Geometry trimmed = overlapping.Aggregate(
                 (Geometry)line,
                 (current, lake) => current.IsEmpty ? current : current.Difference(lake.Buffer(ClipMargin)));
@@ -640,7 +640,7 @@ public sealed class CoastlineService : ICoastlineService
     }
 
     // A border drawn along the coast rather than up to it is the same defect as a border drawn
-    // through a lake, and it arrives by a different route. 2c-ter fills the slits that open onto
+    // through a lake, and it arrives by a different route. 3c fills the slits that open onto
     // the sea, but a slit the fill will not take survives in the shell as a hairline needle, and
     // where a tracer was drawn along the same line the shore and the border carry it twice over.
     // Both then bound the faces traced there, which is a segment three rings use at once: Khumer
@@ -650,7 +650,7 @@ public sealed class CoastlineService : ICoastlineService
     //
     // Cut against the shore as the coast arcs carry it, which is after the slits are filled.
     // Cutting against the shells instead would take the borders that run up a filled slit, and
-    // those are the real borders 2c-ter exists to give back.
+    // those are the real borders 3c exists to give back.
     //
     // Unlike a lake, the water here is not forbidden ground: the sea's edge is a line a border
     // legitimately ends at, and the coast is where it should. So only a run along the edge is
@@ -774,7 +774,7 @@ public sealed class CoastlineService : ICoastlineService
     // since an end of it sits on the margin's own edge where the answer is a coin toss.
     //
     // The shells, holes and all: a hole in the land is either a lake, which the tracers have
-    // already been clipped against, or a gap 2c discarded, and the ground a discarded gap
+    // already been clipped against, or a gap 3d discarded, and the ground a discarded gap
     // covers is land again.
     private bool IsOnLand(LineString piece, STRtree<IPreparedGeometry> land)
     {

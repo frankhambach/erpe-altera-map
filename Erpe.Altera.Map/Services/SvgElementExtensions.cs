@@ -17,11 +17,11 @@ public static class SvgElementExtensions
     //
     // A hidden element is one the author has said is not part of the map, and reading it
     // anyway makes work that has to be undone further down: the two hidden paths in
-    // Border_Tracers are one line drawn twice, and 1b was spending its duplicate rule
+    // Border_Tracers are one line drawn twice, and 2b was spending its duplicate rule
     // collapsing the second onto the first to arrive back where the drawing already was.
     //
     // One rule in one place because the document is read in three: the tracer layers in
-    // Phase 1, and the rim and the country shapes in `ConvertCommand`. The three had the same
+    // step 1, and the rim and the country shapes in `ConvertCommand`. The three had the same
     // type test written out separately and only the first of them asked about `display`.
     //
     // Known limitation: this asks the element and not its ancestors, so linework inside a

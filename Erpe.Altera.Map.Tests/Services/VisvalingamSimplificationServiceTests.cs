@@ -251,7 +251,7 @@ public class VisvalingamSimplificationServiceTests
     [Test]
     public void SelectRemoved_ShouldDecideTheSameWay_WhenTheLineIsWalkedBackwards()
     {
-        // The property the whole of 6d rests on. Two countries either side of a border
+        // The property the whole of 7f rests on. Two countries either side of a border
         // walk it in opposite directions, so a decision that depended on the direction
         // would give them different geometry.
         Coordinate[] line =

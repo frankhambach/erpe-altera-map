@@ -345,9 +345,9 @@ public class TopologyServiceFaceTests
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
         // An overshoot: two borders that should meet at a point cross a little before their ends,
-        // 4a nodes the crossing, and what is left beyond it ends on a node with nothing else on
+        // 5a nodes the crossing, and what is left beyond it ends on a node with nothing else on
         // it. It bounds no region on either side, so the traversal walks out and straight back and
-        // 4d reports it as separating nothing. Arc 11378 was 0.19 units of exactly this.
+        // 5h reports it as separating nothing. Arc 11378 was 0.19 units of exactly this.
         //
         // The other tests here pass a tolerance of zero, so that each stays about the one rule it
         // was written for.
@@ -393,8 +393,8 @@ public class TopologyServiceFaceTests
     public void BuildFaces_ShouldDropTheArc_WhenItComesBackToItsNodeAlongTheSameLine(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {
-        // One line drawn twice inside a single arc. 4f sees one line drawn twice as two arcs
-        // sharing two nodes; this one shares its node with itself, so 4f cannot reach it.
+        // One line drawn twice inside a single arc. 5c sees one line drawn twice as two arcs
+        // sharing two nodes; this one shares its node with itself, so 5c cannot reach it.
         //
         // Both of its half-edges leave the node along the same ray, so both get the same
         // departure angle, the sort falls through to the arc identifier - which cannot separate
@@ -405,7 +405,7 @@ public class TopologyServiceFaceTests
         // "equal" at every vertex. It goes instead.
         //
         // Arc 11183 was 0.00024 units of this at node 363 and arc 11589 0.00057 at node 756,
-        // both of them minted by 4a splitting at a crossing.
+        // both of them minted by 5a splitting at a crossing.
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         Node west = arcGraph.AddNode(new Coordinate(0, 0));
         Node east = arcGraph.AddNode(new Coordinate(10, 0));
@@ -520,7 +520,7 @@ public class TopologyServiceFaceTests
     {
         // Two rings out of one face, and the signs are what tells the caller which is which: the
         // outside comes back with a positive signed area and the hole with a negative one, the
-        // same way round 4b sorts shells from outlines.
+        // same way round 5f sorts shells from outlines.
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         AddArc(
             arcGraph,

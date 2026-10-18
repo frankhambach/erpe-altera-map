@@ -20,7 +20,7 @@ public sealed class VerificationService : IVerificationService
     // than a residue.
     //
     // This was 10% for as long as the residue was unexplained, which it no longer is. It stood
-    // at 11,785 segments, 0.878% of the boundary, and the cause was the union 6a used to dissolve
+    // at 11,785 segments, 0.878% of the boundary, and the cause was the union 7a used to dissolve
     // a country's faces: a general overlay re-nodes what it is given and writes a new edge
     // wherever it decides two are not quite the same. Walking the arcs instead took that residue
     // to 5 segments, 0.000%, and the coarse outputs from 1.632% and 3.684% to 0.002% and 0.004%.

@@ -137,7 +137,7 @@ public class CoastlineServiceTests
         ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
 
         // The same hole, with half a unit of border reaching into it rather than twenty running
-        // along it. Borders are drawn over water all the time, which 2c-bis trims back, and
+        // along it. Borders are drawn over water all the time, which 3f trims back, and
         // that must not be read as the hole being land.
         arcGraph.AddArc(
             ArcKind.Border,
@@ -364,7 +364,7 @@ public class CoastlineServiceTests
             .OnlyContain(coordinate => coordinate.Y > 0.0);
     }
 
-    // A 10 by 10 lake, fat enough for 2c to keep as water, whose shore runs half a unit west
+    // A 10 by 10 lake, fat enough for 3d to keep as water, whose shore runs half a unit west
     // from 45, 50 and comes back `width` units away from where it set out.
     private static Polygon CreateLakeWithANeedle(GeometryFactory geometryFactory, double width)
     {

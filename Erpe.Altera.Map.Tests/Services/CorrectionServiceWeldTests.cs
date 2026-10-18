@@ -240,7 +240,7 @@ public class CorrectionServiceWeldTests
         // it becomes a point. A border reaching for the same place joins that group too, and
         // its end then sits on a node referenced three times - twice by the stub - which is no
         // longer a loose end, so nothing welds the border to the long arc 0.9 units away. The
-        // stub is dropped in Phase 4 for having no direction, and the border is left dividing
+        // stub is dropped in 5b for having no direction, and the border is left dividing
         // nothing. Ligury and Tuscany came out as one face that way.
         ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
         AddArc(arcGraph, coordinateSequenceFactory, [(0, 0), (20, 0)]);

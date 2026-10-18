@@ -134,7 +134,7 @@ public class CorrectionServiceCollapseTests
     {
         // The arc leaves (10, 0), runs out along a straight line, and comes back to exactly
         // (10, 0) before carrying on. That stretch has drawn a line and not a boundary: nothing
-        // can be on one side of it, because both of its sides are the same side. Left in, 4a
+        // can be on one side of it, because both of its sides are the same side. Left in, 5a
         // nodes the arc against its own other leg and the border comes out in pieces that no
         // traversal can divide anything with, which is how Kalimantan and Daha came out as one
         // face. The vertices are spaced differently on the way back, as they are in the source
@@ -182,7 +182,7 @@ public class CorrectionServiceCollapseTests
         // A cusp left by a badly drawn bezier. The arc runs out along the x axis, turns through
         // 180 degrees at (10, 0), and comes back to (3, 0) - which lies on the leg it went out on
         // but is not one of that leg's vertices. No coordinate repeats, so looking for a point
-        // visited twice finds nothing, and the three bridges 4d could not account for were made
+        // visited twice finds nothing, and the three bridges 5h could not account for were made
         // of exactly this.
         //
         // What the run draws is the segment from (0, 0) to (3, 0), walked forwards, backwards and

@@ -31,8 +31,8 @@ internal sealed class ConvertCommand : Command
     // Correction happens in SVG coordinates, because the defects being corrected are
     // drawing errors: they are uniform in SVG units and vary by roughly a factor of
     // ten with latitude once unprojected. This is the SVG-unit equivalent of the
-    // 0.001 degrees used before, and Phase 3 of docs/topology-pipeline.md replaces it
-    // with the measured weld tolerance of 0.5 units.
+    // 0.001 degrees used before, and the weld in phase 3 replaces it with the measured
+    // tolerance of 0.5 units.
     // Six, not four. Four decimal degrees is about 0.0017 SVG units, some seventeen times
     // coarser than the grid the graph is noded on, so distinct nodes would land on top of
     // each other and leave degenerate rings behind. The file grows; the low and medium
@@ -282,7 +282,7 @@ internal sealed class ConvertCommand : Command
 
     // RFC 7946 asks for counter-clockwise shells and clockwise holes, and in memory every ring is
     // wound the other way: 6480 of 6481 in the national layer, the odd one out being a ring of no
-    // area. Not a defect, and not arbitrary either - 4b and 6a sort rings in the source map's
+    // area. Not a defect, and not arbitrary either - 5f and 7a sort rings in the source map's
     // coordinates, where y runs down the page, and unprojecting turns y the other way up and every
     // ring with it. So something has to turn them all back on the way out.
     //
@@ -298,7 +298,7 @@ internal sealed class ConvertCommand : Command
     //
     // A ring of no area is left alone, because there is nothing to turn: Anian's shell of 17
     // points and Namaquab's hole enclose nothing, and reversing either changes no coordinate.
-    // They are the degenerate spikes 7 reports, and a different thing to fix.
+    // They are the degenerate spikes 8 reports, and a different thing to fix.
     private static Polygon Orient(Polygon polygon)
     {
         return polygon.Factory.CreatePolygon(
@@ -315,7 +315,7 @@ internal sealed class ConvertCommand : Command
         }
 
         // The same coordinate objects in the other order. Both sides of a border share those
-        // objects, which is what 6b set up, and turning a ring must not touch them.
+        // objects, which is what 7b set up, and turning a ring must not touch them.
         return ring.Factory.CreateLinearRing([.. ring.Coordinates.Reverse()]);
     }
 
@@ -399,7 +399,7 @@ internal sealed class ConvertCommand : Command
     }
 
     // Every stretch of boundary that is allowed to have only one side to it: the sea coast
-    // and the lake shores, and the boundary of each face 6a had to leave out, since the
+    // and the lake shores, and the boundary of each face 7a had to leave out, since the
     // hole a dropped face leaves is bounded from the outside only.
     private static Coordinate[][] GetOneSided(
         Dictionary<Arc, Coordinate[]> arcs,
@@ -700,8 +700,9 @@ internal sealed class ConvertCommand : Command
         SvgDocument document = SvgDocument.Open<SvgDocument>(inFile.FullName);
         Envelope sourceEnvelope = this.GetEnvelope(document);
 
-        // The arc graph is not yet consumed; shapes still drive the output. Phases 3 to 6
-        // of docs/topology-pipeline.md build the partition on top of it.
+        // The graph every later phase works on. The tracers go in here, the coast and the lake
+        // shores join them in 3, and the faces traced from the lot of them in 5 are what the
+        // output is assembled from - the drawn shapes only say which country each face is.
         ArcGraph arcGraph = new ArcGraph(this.geometryFactory.CoordinateSequenceFactory);
         this.tracerService.AddArcs(document, arcGraph);
         Log.Information(
@@ -767,11 +768,11 @@ internal sealed class ConvertCommand : Command
         // One file per stage rather than one per kind, and both of them framed on the source
         // document's own view box so they open on top of the map and on each other.
         //
-        // Two stages, because the identifiers do not survive the one in between. 4a is the first
+        // Two stages, because the identifiers do not survive the one in between. 5a is the first
         // thing BuildFaces does and it splits arcs at their crossings, minting new identifiers as
         // it goes: on this map the highest goes from 11,125 to 11,717, so every arc the reports
-        // after it name - the bridges of 4d above all - is absent from a file written before it.
-        // The five bridges 4d reports are 11204, 11271, 11273, 11395 and 11421, and not one of
+        // after it name - the bridges of 5h above all - is absent from a file written before it.
+        // The five bridges 5h reports are 11204, 11271, 11273, 11395 and 11421, and not one of
         // them could ever have been found in the file that used to be the only one written.
         CoordinateSequence[] rim = debugSvg ? this.GetRim(document) : [];
         Envelope? view = debugSvg ? GetView(document) : null;

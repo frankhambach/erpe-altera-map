@@ -95,7 +95,7 @@ public sealed class CorrectionService : ICorrectionService
         ArgumentNullException.ThrowIfNull(arcGraph);
 
         // First, because a needle is a stretch an arc repeats of itself, and leaving it in makes
-        // every step after this harder: 4a nodes the arc against its own other leg and the
+        // every step after this harder: 5a nodes the arc against its own other leg and the
         // thicket of sub-unit pieces that comes out is what no later rule can route through.
         RemoveNeedles(arcGraph);
 
@@ -315,7 +315,7 @@ public sealed class CorrectionService : ICorrectionService
     // its vertices spaced differently. That is why this needs no tolerance to speak of: the loop
     // encloses nothing at all rather than nearly nothing.
     //
-    // Left in, a needle does its damage through 4a. The two legs lie on top of each other, so
+    // Left in, a needle does its damage through 5a. The two legs lie on top of each other, so
     // noding cuts the arc at every vertex of the overlap, and 44 units of border between
     // Kalimantan and Daha came out as thirteen pieces, ten of them under 0.3 units. A traversal
     // cannot divide anything with that: it walks down the border, into the needle and back out,
@@ -341,7 +341,7 @@ public sealed class CorrectionService : ICorrectionService
     // nothing, because every vertex of the run is on one line: what the run draws is that
     // segment, walked forwards, backwards, and forwards again.
     //
-    // These are what the three bridges 4d could not account for were made of - arc 232 at
+    // These are what the three bridges 5h could not account for were made of - arc 232 at
     // 3110.99, 2200.27 and arc 412 at 5426.15, 2825.74 - and what the last two faces rejected
     // for crossing themselves were made of, both on arc 1337 at 3458.22, 2393.30.
     private static void RemoveNeedles(ArcGraph arcGraph)
@@ -908,7 +908,7 @@ public sealed class CorrectionService : ICorrectionService
     // A split on the arc's own first vertex has no segment before it and comes out with a
     // segment index of -1, which `AddPiece` reads as an empty piece between the arc's start node
     // and the new one: the geometry is kept whole and the zero length piece between two
-    // coincident nodes is contracted away in 4e. Nothing on this map does it, but only just -
+    // coincident nodes is contracted away in 5b. Nothing on this map does it, but only just -
     // the earliest of the 167 lands on segment 1, one segment short of it - so the arithmetic
     // has to hold rather than merely not be reached.
     private static Split CreateSplit(Segment segment, Node node, double parameter, double distance, double grid)
@@ -923,7 +923,7 @@ public sealed class CorrectionService : ICorrectionService
     // share, or where two arcs cross, has several segments at the same distance from it, and
     // the index hands them back in the order it packed them into its tree - which changes
     // whenever an arc is added or removed anywhere, so an answer taken from that order is not
-    // an answer about the map. The arcs' own identifiers are, and the duplicate rule in 4c
+    // an answer about the map. The arcs' own identifiers are, and the duplicate rule in 5c
     // already leans on them for the same reason: the same graph has to reduce the same way.
     private static bool IsPreferred(Split candidate, Split current)
     {

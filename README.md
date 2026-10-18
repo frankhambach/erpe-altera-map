@@ -8,20 +8,18 @@ The point of it is a **planar partition**: a border exists exactly once, and bot
 
 The input is not a partition. The drawn country shapes overlap, leave gaps, and each carries its own version of every border it shares. The pipeline throws those versions away and rebuilds the map from a graph of **arcs** — lines between **nodes** where three or more of them meet — so that a border is one arc with two countries referring to it.
 
-| Phase | What happens |
-|-------| --- |
-| **1** | Read the `Border_Tracers` and `Substate_Tracers` layers as arcs on shared nodes. |
+| Step | What happens |
+|------| --- |
+| **1** | Read the drawing: approximate its curves as lines, leave out linework too short to matter and anything the author has hidden, take the `Border_Tracers` and `Substate_Tracers` layers as arcs on shared nodes, and build the drawn country shapes as polygons. |
 | **2** | Cut out the stretches a tracer draws twice: whole lines drawn over each other, and needles where one doubles back along itself. |
-| **3** | Union the country shapes into the landmass and take its outline as the coast. Each hole is a lake or a gap between shapes, told apart by its **hydraulic radius** — area over perimeter, which measures thinness and smallness at once. Gaps are filled; lakes are kept as their own kind of arc. |
+| **3** | Union the country shapes into the landmass and take its outline as the coast. Each hole is a lake or a gap between shapes, told apart by its **hydraulic radius** — area over perimeter, which measures thinness and smallness at once. Gaps are filled, lakes are kept as their own kind of arc, and the borders drawn across either are cut back to the water's edge. |
 | **4** | Weld the loose tracer ends: ends within 0.5 units of each other become one node, and an end within 3 units of another arc is threaded into it as a node. |
 | **5** | Node the remaining crossings, then trace every face by walking half-edges — at each node, one step clockwise from the way back. Arcs that cannot be traced are removed first: arcs the noding grid cannot represent, one line drawn twice as two arcs, overshoots dangling past a crossing, and arcs that run out and back along their own line. |
-| **6** | Assign each face to a country by overlap with the drawn shapes. A face bounded only by lake shore is water. |
-| **7** | Dissolve each country by **walking the arcs** that bound its faces, not by unioning them. Unproject, simplify, and write. |
-| **8** | Verify: count every segment of the output and check that each inland one is used exactly twice, once from each side and in opposite directions. |
+| **6** | Assign each face to a country by how much of it that country covers. A face bounded only by lake shore is water, and a face nobody claims is absorbed into the neighbour it shares the most border with. |
+| **7** | Dissolve each country by **walking the arcs** that bound its faces, not by unioning them. Unproject, turn every ring the way RFC 7946 asks, simplify for the coarse outputs, and write the GeoJson and the topology. |
+| **8** | Verify: count every segment of the output and check that each inland one is used exactly twice, once from each side and in opposite directions, with the same coordinates. |
 
-`docs/topology-pipeline.md` is the long form of all of this, including what was measured, what was tried and abandoned, and why each tolerance is the number it is.
-
-The algorithms it rests on:
+The algorithms the pipeline rests on:
 
 * [De Casteljau's algorithm](https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm) for approximating bezier curves in the vector file with lines, as GIS does not handle curves.
 * The method described in [this StackOverflow answer](https://stackoverflow.com/a/31474580) for turning the self-intersecting polygons of the input into multiple non-self-intersecting ones.
@@ -63,7 +61,7 @@ With `--debug-svg`, four further files are written **in the coordinates of the s
 | `map-faces.svg` | everything the border network encloses, one path per face |
 | `map-dropped.svg` | only the faces left out |
 
-The two arc files are both written because phase 5 mints new arc identifiers as it splits arcs at their crossings: anything the later reports name by number is absent from the earlier file.
+The two arc files are both written because step 5 mints new arc identifiers as it splits arcs at their crossings: anything the later reports name by number is absent from the earlier file.
 
 ## Known limitations
 

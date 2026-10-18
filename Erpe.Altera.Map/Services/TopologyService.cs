@@ -26,7 +26,7 @@ public sealed class TopologyService : ITopologyService
     // What two arcs on the same two nodes may enclose between them and still be one line
     // drawn twice, as an area over the length of the loop they make. The 4.4x gap the figure
     // sits in is measured in RemoveDuplicateArcs below, and it is the same hydraulic radius
-    // Phase 2 uses to tell a gap from a lake and a slit from an inlet.
+    // 3c and 3d use to tell a gap from a lake and a slit from an inlet.
     private const double MaximumDuplicateAreaToLengthRatio = 0.15;
 
     // A loop of no perimeter has no shape to measure, and dividing by it would come out as
@@ -66,7 +66,7 @@ public sealed class TopologyService : ITopologyService
 
         // Two nodes at one coordinate are one node, however they got there, and an arc between
         // such a pair has no length and so no direction to leave the node in. That matters
-        // because 4b chooses where to go next by departure angle, and the angle of a line of
+        // because 5f chooses where to go next by departure angle, and the angle of a line of
         // no length is whatever Atan2 makes of two zeroes: GetDepartureAngle falls back to a
         // coordinate equal to the start when it can find no different one, so such an arc
         // claims to leave at angle 0 whatever lies around it. One of those in the order is
@@ -82,7 +82,7 @@ public sealed class TopologyService : ITopologyService
         // Measured, because the obvious thing is wrong: merging nodes the grid puts at the
         // same point collapses 605 of them rather than 57 and takes the countries with no
         // geometry from 6 to 18. The arc geometry is not on the grid - only the crossing
-        // points of 4a are ever made precise, and the drawn coordinates come off the SVG as
+        // points of 5a are ever made precise, and the drawn coordinates come off the SVG as
         // they are - so two nodes less than a grid step apart are two real points in the
         // data, and rounding them together joins chains that the map never joined. The grid
         // is a resolution, not a tolerance. Within one arc it says what is too small to have
@@ -207,7 +207,7 @@ public sealed class TopologyService : ITopologyService
     }
 
     // Dissolving a set of faces by walking their arcs rather than by unioning their geometry.
-    // 6a used to hand the faces to UnaryUnionNG, which is a general overlay: it re-nodes
+    // 7a used to hand the faces to UnaryUnionNG, which is a general overlay: it re-nodes
     // everything it is given, and where it decides two edges are not quite the same it writes a
     // new one. Measured over the finished output, the boundary it follows exactly is 267,758
     // segments and the boundary it does not is 5,565 - and removing the dissolve outright takes
@@ -218,7 +218,7 @@ public sealed class TopologyService : ITopologyService
     //
     // An arc is interior when the faces either side of it are both in the set, and those drop
     // out in pairs. What is left is every half-edge whose other side lies outside, which is the
-    // boundary, and it is chained by the same rule 4b traces faces with - the next way out of a
+    // boundary, and it is chained by the same rule 5f traces faces with - the next way out of a
     // node, clockwise from the way back - except that a half-edge the set swallowed is stepped
     // over rather than taken. That is what makes the walk hug the outside of the set instead of
     // turning into it at the first internal border.
@@ -292,11 +292,11 @@ public sealed class TopologyService : ITopologyService
     // a border is missing where the chain should have closed, or the chain is drawn out into
     // the open and should not be there at all.
     // An arc with nothing on the far end of it. It bounds no region on either side, so a
-    // traversal that reaches it walks out and straight back, and 4d reports it as separating
+    // traversal that reaches it walks out and straight back, and 5h reports it as separating
     // nothing - which is exactly what it is.
     //
     // These are overshoots. Where two borders that should meet at a point instead cross a little
-    // before their ends, 4a nodes the crossing and the stubs beyond it are left over; 4f drops
+    // before their ends, 5a nodes the crossing and the stubs beyond it are left over; 5c drops
     // one of the pair as a duplicate, and the survivor is a dangle. That is arc 11378 at
     // 4483.17, 1829.51, 0.19 units of the Kinar border past the point where it crosses the one it
     // was drawn to meet, with the three borders of that junction properly joined at the crossing
@@ -307,11 +307,11 @@ public sealed class TopologyService : ITopologyService
     // same point, so there is nothing in it. Above that a dangle is a real failure - a chain that
     // never closed, a region that got no face - and pruning it would delete the evidence instead
     // of the defect. Prabang's border dangled for 44 units and reading that report is how it was
-    // found. So the long ones stay and 4d goes on reporting them.
+    // found. So the long ones stay and 5h goes on reporting them.
     //
     // Repeated to a fixpoint, because the arc behind a pruned one can be left dangling in its
     // turn. On this map it settles in one round: 2 arcs, 0.012 and 0.19 units, which are the last
-    // two 4d had to report, and nothing behind them.
+    // two 5h had to report, and nothing behind them.
     private static (int Pruned, double Length, double Longest) RemoveDanglingArcs(
         ArcGraph arcGraph,
         double dangleTolerance)
@@ -355,11 +355,11 @@ public sealed class TopologyService : ITopologyService
     }
 
     // An arc that reads the same forwards as backwards is one line drawn twice inside a single
-    // arc: it leaves its node, runs out to a point and comes back over itself. 4f catches one
-    // line drawn twice as two arcs; this is the same defect wearing one arc, which 4f cannot see
+    // arc: it leaves its node, runs out to a point and comes back over itself. 5c catches one
+    // line drawn twice as two arcs; this is the same defect wearing one arc, which 5c cannot see
     // because it only looks at pairs sharing two nodes and this one shares its node with itself.
     //
-    // It matters because of the order 4b sorts a node's half-edges into. Both half-edges of such
+    // It matters because of the order 5f sorts a node's half-edges into. Both half-edges of such
     // an arc leave along the same ray, so GetDepartureAngle gives them the same angle, the sort
     // falls through to ThenBy(arc.Id) - which cannot separate them either, both being the same
     // arc - and which of the two the traversal turns onto is left to the order they happened to
@@ -371,15 +371,15 @@ public sealed class TopologyService : ITopologyService
     // angle, answers "equal" at every vertex here: the two sequences are the same sequence.
     //
     // The test is exact and needs no tolerance, which is what makes it safe where the enclosed
-    // radius of 3a-bis is not. Of the 10,032 arcs in the traced graph and the 5,599 closed ones
+    // radius of 4b is not. Of the 10,032 arcs in the traced graph and the 5,599 closed ones
     // among them, two read the same both ways: arc 11183, 0.00024 units of substate border at
     // node 363, and arc 11589, 0.00057 units of coast at node 756. Both enclose exactly nothing.
     // The radius test would want a kind restriction to stay safe - 1,326 closed coast arcs score
     // under its threshold - and that restriction is what hides the coast one.
     //
-    // It has to run here rather than in 1b-bis or 3a-bis, because neither arc exists when those
-    // run: before 4a nodes the crossings the graph holds 9,824 arcs with 11,128 the highest
-    // identifier, and afterwards 10,138 with 11,685, so 4a's own splitting is what makes them.
+    // It has to run here rather than in 2a or 4b, because neither arc exists when those
+    // run: before 5a nodes the crossings the graph holds 9,824 arcs with 11,128 the highest
+    // identifier, and afterwards 10,138 with 11,685, so 5a's own splitting is what makes them.
     // It runs before the dangles, so that an arc left with nothing on its far end by one of
     // these going is pruned in the same pass rather than in the next run.
     private static (int Dropped, double Length) RemoveRetracedArcs(ArcGraph arcGraph)
@@ -409,22 +409,22 @@ public sealed class TopologyService : ITopologyService
         return true;
     }
 
-    // Where two half-edges leave a node at the same angle, which of them 4b turns onto is
+    // Where two half-edges leave a node at the same angle, which of them 5f turns onto is
     // arbitrary: the sort falls through to ThenBy(arc.Id), and an identifier is not a direction.
-    // Worse, 4a mints identifiers as it splits arcs at crossings, so one shape added elsewhere
+    // Worse, 5a mints identifiers as it splits arcs at crossings, so one shape added elsewhere
     // on the map can renumber the two and silently swap the turn - the partition stops being a
     // function of the geometry.
     //
     // Nothing on this map ties any more. The 109 nodes this once reported were measured before
-    // the needles of 1b-bis, the collapsed stubs of 3a-bis, the duplicates of 4f, the grid
-    // contraction of 4e and the overshoots pruned above, every one of which removes a reason for
+    // the needles of 2a, the collapsed stubs of 4b, the duplicates of 5c, the grid
+    // contraction of 5b and the overshoots pruned above, every one of which removes a reason for
     // two arcs to leave a node along one ray. The two that outlasted all of them were one arc
-    // with itself, and 4g above drops those. So this reports rather than repairs, and it is the
+    // with itself, and 5d above drops those. So this reports rather than repairs, and it is the
     // signal that the repair is wanted: two arcs that genuinely diverge can be ordered by
     // comparing them further along than their first vertex, which is work worth doing when
     // there is something to do it to.
     //
-    // Reported for every tie and not only for two different arcs, because after 4g a tie of
+    // Reported for every tie and not only for two different arcs, because after 5d a tie of
     // either kind is the same hazard with the same remedy. A closed arc whose two ends leave
     // collinearly without retracing each other is orderable in exactly the same way, and
     // staying silent about it would leave a blind spot where a warning costs nothing.
@@ -461,13 +461,13 @@ public sealed class TopologyService : ITopologyService
             + "onto falls to the arc identifier and is arbitrary: {Which}. A face there may come out traced the "
             + "wrong way round. Two different arcs can be put in order by comparing them further along than "
             + "their first vertex; an arc tied with itself runs back over its own line and should have gone in "
-            + "4g.",
+            + "5d.",
             ties.Count,
             string.Join(", ", ties.Take(10)) + (ties.Count > 10 ? ", and more" : string.Empty));
     }
 
     // The next half-edge of the boundary out of the node this one ends at. Clockwise from the way
-    // back, as in 4b, and over the node's whole fan rather than the boundary's share of it, so
+    // back, as in 5f, and over the node's whole fan rather than the boundary's share of it, so
     // that an arc the set swallowed is stepped over in its proper place in the order instead of
     // being left out of the order altogether.
     private static DirectedArc? GetNextOnBoundary(
@@ -607,7 +607,7 @@ public sealed class TopologyService : ITopologyService
     // an edge cannot change what is connected to what. Only the arc's own length goes, and the
     // grid has already said that length is below what it can represent.
     //
-    // The arcs this reaches are made rather than drawn. 4a makes every crossing point precise
+    // The arcs this reaches are made rather than drawn. 5a makes every crossing point precise
     // and nothing else ever passes through the model, so a crossing computed where a vertex was
     // already drawn comes out a fraction of a grid step away from it instead of on it: arc 11706
     // joins the noded node 9560 at 2440.3538, 857.6366 to the drawn node 633 at 2440.35376,
@@ -697,7 +697,7 @@ public sealed class TopologyService : ITopologyService
     // Nodes sharing a coordinate collapse onto the one with the lowest identifier, so that
     // the same graph always collapses the same way. They arise from both ends of the
     // pipeline: noding a crossing adds a node at the rounded intersection, which may land on
-    // a node already there, and cutting a duplicate tracer in 1b adds nodes at the ends of
+    // a node already there, and cutting a duplicate tracer in 2b adds nodes at the ends of
     // what it cut.
     private static int MergeCoincidentNodes(ArcGraph arcGraph)
     {
@@ -792,7 +792,7 @@ public sealed class TopologyService : ITopologyService
 
     // Two arcs that join the same pair of nodes and run along each other the whole way are
     // one line drawn twice. Both copies leave each of the two nodes they share, the four
-    // half-edges interleave in the order 4b sorts them into, and a traversal arriving along
+    // half-edges interleave in the order 5f sorts them into, and a traversal arriving along
     // one of them takes the other as its next turn and reverses: at node 819 in the sample
     // map the coast left forwards at -22.249 degrees, the border backwards at -18.471, the
     // coast backwards at 158.174 and the border forwards at 161.918. Whatever the reversed
@@ -802,7 +802,7 @@ public sealed class TopologyService : ITopologyService
     // face because a border copied another border.
     //
     // Told apart by what the two enclose between them, over the length of the loop they make
-    // - the hydraulic radius of Phase 2 again, since one line drawn twice encloses nothing
+    // - the hydraulic radius of 3d again, since one line drawn twice encloses nothing
     // while two routes enclose a lens. Measured over all 166 pairs of arcs that share both
     // their nodes on this map: 128 of them come to 0.1243 at the widest, the next is 0.2138,
     // and nothing lies between. The rest run from there to 12.78 and are alternative routes.
@@ -822,7 +822,7 @@ public sealed class TopologyService : ITopologyService
     // land from sea; otherwise the lowest identifier is kept, so that the same graph always
     // reduces the same way.
     //
-    // This runs after Phase 2 has filled the slits in the coast, and the order matters: a
+    // This runs after 3c has filled the slits in the coast, and the order matters: a
     // border running along the wall of a slit looks just like a copy of the shore, but it is
     // a real border and the slit is the error. Filled first, no such pair is left to find.
     private static (int Dropped, double Length, double Widest) RemoveDuplicateArcs(ArcGraph arcGraph)
@@ -916,7 +916,7 @@ public sealed class TopologyService : ITopologyService
     {
         Dictionary<Node, DirectedArc[]> outgoing = BuildOutgoing(arcGraph);
 
-        // Here rather than in BuildOutgoing, which 6a calls again for the dissolve: the graph is
+        // Here rather than in BuildOutgoing, which 7a calls again for the dissolve: the graph is
         // the same by then and a second report would say the same thing twice.
         ReportTiedDepartures(outgoing);
         Dictionary<DirectedArc, int> positions = new Dictionary<DirectedArc, int>();

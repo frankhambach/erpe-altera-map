@@ -115,7 +115,7 @@ public sealed class AssemblyService : IAssemblyService
     // Cut by node rather than by coordinate, which is what this used to do, so that each lobe is
     // still a run of whole arcs and can be written out as one. The two are the same thing here:
     // 3 of the 7,244 dissolved rings on this map need cutting and all 3 pinch at a node, which is
-    // what 4a guarantees for a crossing and 1b-bis for a tracer touching itself. A pinch
+    // what 5a guarantees for a crossing and 2a for a tracer touching itself. A pinch
     // somewhere inside an arc would be missed, and the polygon it makes would then fail the
     // validity check below and be reported rather than quietly written.
     private static List<DirectedArc[]> UnloopArcs(DirectedArc[] ring)
