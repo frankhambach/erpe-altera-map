@@ -96,7 +96,7 @@ C:/Users/frank/.dotnet/dotnet.exe run --project Erpe.Altera.Map/Erpe.Altera.Map.
 
 A full run is about a hundred seconds. Write outputs to the scratchpad, not into the repo.
 
-**The test suite has 44 pre-existing failures** — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests`. They are unrelated to the topology work and have been failing throughout. **44 failing is the baseline**; compare against it rather than expecting zero, and say the total when reporting ("966 passing against the unchanged 44-failure baseline").
+**The test suite passes clean: 1008 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1008 passing, 0 failing").
 
 ## Conventions that will fail the build if ignored
 
