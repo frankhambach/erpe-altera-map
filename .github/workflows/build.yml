@@ -1,0 +1,167 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # Erpe.Analyzers and Erpe.Testing are published to this feed rather than nuget.org.
+  ERPE_FEED: https://nuget.pkg.github.com/frankhambach/index.json
+  # The line coverage below which the build fails. It stood at 74.4% when this was set.
+  COVERAGE_THRESHOLD: 70
+
+jobs:
+  build:
+    # The application pins RuntimeIdentifier win-x64, so it is built and tested where it runs.
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      semVer: ${{ steps.gitversion.outputs.semVer }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GitVersion reads the whole history and every tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.0.0
+        with:
+          versionSpec: 6.0.x
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.0.0
+
+      - name: Add the Erpe package feed
+        shell: pwsh
+        run: >
+          dotnet nuget add source $env:ERPE_FEED
+          --name erpe
+          --username ${{ github.repository_owner }}
+          --password ${{ secrets.GITHUB_TOKEN }}
+          --store-password-in-clear-text
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore Erpe.Altera.Map.sln
+
+      - name: Build
+        shell: pwsh
+        run: >
+          dotnet build Erpe.Altera.Map.sln
+          --configuration Release
+          --no-restore
+          -p:Version=${{ steps.gitversion.outputs.assemblySemVer }}
+          -p:FileVersion=${{ steps.gitversion.outputs.assemblySemFileVer }}
+          -p:InformationalVersion=${{ steps.gitversion.outputs.informationalVersion }}
+          -p:IncludeSourceRevisionInInformationalVersion=false
+
+      # coverlet.msbuild comes in through Erpe.Testing, and its threshold fails the run.
+      - name: Test
+        shell: pwsh
+        run: >
+          dotnet test Erpe.Altera.Map.Tests/Erpe.Altera.Map.Tests.csproj
+          --configuration Release
+          --no-build
+          --logger trx
+          --results-directory TestResults
+          -p:CollectCoverage=true
+          -p:CoverletOutputFormat=cobertura
+          -p:CoverletOutput=${{ github.workspace }}/TestResults/coverage/
+          -p:Threshold=${{ env.COVERAGE_THRESHOLD }}
+          -p:ThresholdType=line
+          -p:ThresholdStat=total
+
+      - name: Summarize coverage
+        if: ${{ !cancelled() && hashFiles('TestResults/coverage/coverage.cobertura.xml') != '' }}
+        shell: pwsh
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          reportgenerator `
+            -reports:TestResults/coverage/coverage.cobertura.xml `
+            -targetdir:TestResults/coverage/report `
+            -reporttypes:"MarkdownSummaryGithub;HtmlInline"
+          Get-Content TestResults/coverage/report/SummaryGithub.md | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+
+      - name: Publish
+        shell: pwsh
+        run: >
+          dotnet publish Erpe.Altera.Map/Erpe.Altera.Map.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained
+          --output publish
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=embedded
+          -p:Version=${{ steps.gitversion.outputs.assemblySemVer }}
+          -p:FileVersion=${{ steps.gitversion.outputs.assemblySemFileVer }}
+          -p:InformationalVersion=${{ steps.gitversion.outputs.informationalVersion }}
+          -p:IncludeSourceRevisionInInformationalVersion=false
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Copy-Item README.md, LICENSE publish/
+          Compress-Archive -Path publish/* -DestinationPath erpe-altera-map-${{ steps.gitversion.outputs.semVer }}-win-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: erpe-altera-map-win-x64
+          path: erpe-altera-map-*-win-x64.zip
+
+  release:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: erpe-altera-map-win-x64
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.build.outputs.semVer }}
+        run: |
+          # A re-run of a commit that has already been released must not fail on the existing tag.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG already exists."
+            exit 0
+          fi
+          gh release create "$TAG" erpe-altera-map-*-win-x64.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes

@@ -1,0 +1,12 @@
+# Every push to main is a release, so main follows GitHub Flow: the version is the last
+# release tag plus a patch, and "+semver: minor" or "+semver: major" in a commit message
+# raises it further. next-version only applies until the first release tag exists.
+workflow: GitHubFlow/v1
+next-version: 1.0.0
+tag-prefix: '[vV]?'
+branches:
+  main:
+    # GitHub Flow's default for main counts the commits since the last tag into a
+    # prerelease number, 1.0.0-91, where a release wants a plain 1.0.0. In GitVersion 6
+    # ContinuousDeployment is the mode that gives every commit on main a release version.
+    mode: ContinuousDeployment
