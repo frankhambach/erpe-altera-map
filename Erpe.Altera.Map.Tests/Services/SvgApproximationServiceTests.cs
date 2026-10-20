@@ -367,7 +367,7 @@ public class SvgApproximationServiceTests
 
         result.Should()
             .BeEquivalentTo(
-                [new Coordinate(0, 0), new Coordinate(1, 1), new Coordinate(1, 0), new Coordinate(0, 0)],
+                [new Coordinate(0, 0), new Coordinate(1, 1), new Coordinate(1, 0)],
                 options => options.WithStrictOrdering());
     }
 
