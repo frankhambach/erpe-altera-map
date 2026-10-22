@@ -194,6 +194,7 @@ public sealed class DiagnosticsService : IDiagnosticsService
             (ArcKind.Lake, "lakes"),
             (ArcKind.Substate, "substates"),
             (ArcKind.Border, "borders"),
+            (ArcKind.Rim, "rim"),
         ];
 
         List<string> lines = [];
@@ -315,6 +316,7 @@ public sealed class DiagnosticsService : IDiagnosticsService
                 ArcKind.Substate => SubstateColour,
                 ArcKind.Coast => CoastColour,
                 ArcKind.Lake => LakeColour,
+                ArcKind.Rim => RimColour,
                 _ => NodeColour,
             };
     }

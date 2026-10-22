@@ -29,6 +29,15 @@ public sealed class TopologyService : ITopologyService
     // 3c and 3d use to tell a gap from a lake and a slit from an inlet.
     private const double MaximumDuplicateAreaToLengthRatio = 0.15;
 
+    // The same, for a sliver one side of which is the rim. Measured over the twelve such pairs on
+    // the 22 October export, which fall into two groups 45 times apart: nine hairlines from
+    // 1.1e-4 to 2.7e-3, where Antarctica's coast is the drawn rim and the traced one runs along
+    // it, and three from 0.124 to 0.137, which are land drawn past the rim - Anian-21's islet and
+    // the two halves of Mammoth Island. At the 0.15 above all twelve went, and Anian-21 lost the
+    // 0.0011 square degrees beyond the rim that nothing on the other side covers. 0.01 is four
+    // times the widest hairline and a twelfth of the narrowest overshoot.
+    private const double MaximumRimDuplicateAreaToLengthRatio = 0.01;
+
     // A loop of no perimeter has no shape to measure, and dividing by it would come out as
     // NaN, which compares false against every threshold.
     private const double DegenerateLength = 1E-9;
@@ -63,6 +72,15 @@ public sealed class TopologyService : ITopologyService
         ArgumentNullException.ThrowIfNull(arcGraph);
 
         int crossings = this.NodeCrossings(arcGraph);
+
+        (int overWater, int overLand) = RemoveRimOverWater(arcGraph);
+        if ((overWater > 0) || (overLand > 0))
+        {
+            Log.Information(
+                "Kept {OverLand} stretches of the rim that cross land and dropped {OverWater} that lie over water.",
+                overLand,
+                overWater);
+        }
 
         // Two nodes at one coordinate are one node, however they got there, and an arc between
         // such a pair has no length and so no direction to leave the node in. That matters
@@ -354,6 +372,68 @@ public sealed class TopologyService : ITopologyService
         }
     }
 
+    // The rim as 4g added it runs the whole height of the map, sea and all, and only where it
+    // crosses land does it divide anything. Over water it would be a line through the ocean
+    // joining islands the map does not join, and 5f would walk out along it and back. With every
+    // crossing a node, each stretch lies wholly over land or wholly over water, and one point of
+    // it says which: a ray from it crosses the coast and the lake shores an odd number of times
+    // from land and an even number from water, a lake counting as water. Even-odd rather than
+    // nesting, because it needs nothing but the shore lines, and they are closed by now.
+    private static (int OverWater, int OverLand) RemoveRimOverWater(ArcGraph arcGraph)
+    {
+        Arc[] rim = [.. arcGraph.Arcs.Where(arc => arc.Kind == ArcKind.Rim)];
+        if (rim.Length == 0)
+        {
+            return (0, 0);
+        }
+
+        STRtree<(Coordinate Start, Coordinate End)> shore = new STRtree<(Coordinate Start, Coordinate End)>();
+        double maximumX = double.NegativeInfinity;
+        foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake))
+        {
+            Coordinate[] coordinates = arc.GetFullCoordinates();
+            for (int i = 0; i < (coordinates.Length - 1); ++i)
+            {
+                shore.Insert(new Envelope(coordinates[i], coordinates[i + 1]), (coordinates[i], coordinates[i + 1]));
+                maximumX = Math.Max(maximumX, Math.Max(coordinates[i].X, coordinates[i + 1].X));
+            }
+        }
+
+        int overWater = 0;
+        foreach (Arc arc in rim)
+        {
+            Coordinate[] coordinates = arc.GetFullCoordinates();
+            int middle = (coordinates.Length - 1) / 2;
+            Coordinate point = new Coordinate(
+                (coordinates[middle].X + coordinates[middle + 1].X) / 2.0,
+                (coordinates[middle].Y + coordinates[middle + 1].Y) / 2.0);
+            int crossings = point.X >= maximumX
+                ? 0
+                : shore.Query(new Envelope(point.X, maximumX, point.Y, point.Y))
+                    .Count(segment => IsCrossedByRay(segment, point));
+            if ((crossings % 2) == 0)
+            {
+                arcGraph.Arcs.Remove(arc);
+                ++overWater;
+            }
+        }
+
+        return (overWater, rim.Length - overWater);
+    }
+
+    // Whether a ray from the point towards increasing x crosses the segment. Half-open in y, so
+    // that a ray through a vertex counts it for one of the two segments meeting there, not both.
+    private static bool IsCrossedByRay((Coordinate Start, Coordinate End) segment, Coordinate point)
+    {
+        (Coordinate start, Coordinate end) = segment;
+        if ((start.Y > point.Y) == (end.Y > point.Y))
+        {
+            return false;
+        }
+
+        return (start.X + (((point.Y - start.Y) / (end.Y - start.Y)) * (end.X - start.X))) > point.X;
+    }
+
     // An arc that reads the same forwards as backwards is one line drawn twice inside a single
     // arc: it leaves its node, runs out to a point and comes back over itself. 5c catches one
     // line drawn twice as two arcs; this is the same defect wearing one arc, which 5c cannot see
@@ -506,9 +586,15 @@ public sealed class TopologyService : ITopologyService
             }
         }
 
+        // The rim is boundary even with the set on both sides of it. What lies beyond it is taken
+        // round to the other side of the map in 7b, so the two faces it divides end up 360
+        // degrees apart and a shape dissolved across it would jump the globe in one segment. Kept,
+        // it divides the country into a shape either side, which is the cut RFC 7946 asks for.
         HashSet<DirectedArc> boundary =
         [
-            .. inside.Where(directed => !inside.Contains(new DirectedArc(directed.Arc, !directed.IsReversed))),
+            .. inside.Where(
+                directed => (directed.Arc.Kind == ArcKind.Rim)
+                    || !inside.Contains(new DirectedArc(directed.Arc, !directed.IsReversed))),
         ];
 
         List<DirectedArc[]> rings = [];
@@ -565,7 +651,8 @@ public sealed class TopologyService : ITopologyService
 
         Arc[] bridges =
         [
-            .. ringsPerArc.Where(pair => (pair.Value == 1) && (pair.Key.Kind is ArcKind.Border or ArcKind.Substate))
+            .. ringsPerArc.Where(
+                    pair => (pair.Value == 1) && (pair.Key.Kind is ArcKind.Border or ArcKind.Substate or ArcKind.Rim))
                 .Select(pair => pair.Key)
                 .OrderByDescending(arc => arc.GetFullCoordinates().Length),
         ];
@@ -825,6 +912,16 @@ public sealed class TopologyService : ITopologyService
     // This runs after 3c has filled the slits in the coast, and the order matters: a
     // border running along the wall of a slit looks just like a copy of the shore, but it is
     // a real border and the slit is the error. Filled first, no such pair is left to find.
+    //
+    // The rim is kept over the coast in turn, because nobody drew it: it is where the map is
+    // cut, and a coast drawn along it is the drawing following the cut. Antarctica's coast is the
+    // drawn rim itself, down both edges of the map, and the rim traced from the projection runs
+    // within a thousandth of a unit of it, crossing it every few vertices. Between two crossings
+    // the pair encloses a hairline that 5f cannot order: the first run without this took the
+    // Antarctic face into the outline of the landmass, 17% of the land inside no face. Dropping
+    // the coast instead cuts the land along the rim exactly, which is what the rim is for, and
+    // leaves nothing beyond it. Exempting the rim from this test was tried first, and is that run.
+    // The test is a narrower one against the rim, for the reason GetMaximumSliverRadius gives.
     private static (int Dropped, double Length, double Widest) RemoveDuplicateArcs(ArcGraph arcGraph)
     {
         Dictionary<(int Low, int High), List<Arc>> byPair = new Dictionary<(int Low, int High), List<Arc>>();
@@ -847,13 +944,19 @@ public sealed class TopologyService : ITopologyService
         foreach (List<Arc> arcs in byPair.Values.Where(arcs => arcs.Count > 1))
         {
             List<Arc> kept = [];
-            foreach (Arc arc in arcs.OrderBy(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake ? 0 : 1)
-                         .ThenBy(arc => arc.Id))
+            foreach (Arc arc in arcs.OrderBy(GetPrecedence).ThenBy(arc => arc.Id))
             {
-                double radius = kept.Count == 0
-                    ? double.PositiveInfinity
-                    : kept.Min(other => GetSliverRadius(other, arc));
-                if (radius > MaximumDuplicateAreaToLengthRatio)
+                double radius = double.PositiveInfinity;
+                foreach (Arc other in kept)
+                {
+                    double candidate = GetSliverRadius(other, arc);
+                    if (candidate <= GetMaximumSliverRadius(other, arc))
+                    {
+                        radius = Math.Min(radius, candidate);
+                    }
+                }
+
+                if (double.IsPositiveInfinity(radius))
                 {
                     kept.Add(arc);
                     continue;
@@ -871,6 +974,29 @@ public sealed class TopologyService : ITopologyService
         }
 
         return (duplicates.Count, length, widest);
+    }
+
+    // How thin the sliver between two arcs has to be before they are taken for one line. Against
+    // the rim it has to be far thinner than between two drawn lines, because a sliver against the
+    // rim is not a line drawn twice but land drawn past it, and that wants wrapping or leaving
+    // out in 5i, not cutting off here. What 5c is for at the rim is the hairline only.
+    private static double GetMaximumSliverRadius(Arc one, Arc other)
+    {
+        return (one.Kind == ArcKind.Rim) || (other.Kind == ArcKind.Rim)
+            ? MaximumRimDuplicateAreaToLengthRatio
+            : MaximumDuplicateAreaToLengthRatio;
+    }
+
+    // Which of two arcs drawn as one 5c keeps: the rim over everything, and the coast over a
+    // border, a border being unable to divide land from sea.
+    private static int GetPrecedence(Arc arc)
+    {
+        return arc.Kind switch
+            {
+                ArcKind.Rim => 0,
+                ArcKind.Coast or ArcKind.Lake => 1,
+                _ => 2,
+            };
     }
 
     // The sliver the two arcs enclose, as its area over its perimeter. The loop closes on

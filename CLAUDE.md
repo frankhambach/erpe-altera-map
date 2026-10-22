@@ -44,22 +44,25 @@ Everything until 7b happens in **SVG coordinates**, on the fixed precision grid 
 | 4d | Express a split that lands on a vertex against *that* vertex, or the next one along is discarded. Ties go to the lower identifier, never to the index's order | `CreateSplit`, `IsPreferred` |
 | 4e | Report an end that reaches nothing rather than guessing — reaching further invents a border | `Weld` |
 | 4f | Apply the tolerance to ends only, never to interior vertices, which would staircase real coastline | `Weld` |
+| 4g | Add the rim — the antimeridian, traced from the projection down both edges and carried a unit past each pole — as `ArcKind.Rim`. After welding, so no end is threaded into a line nobody drew | `RimService.AddArcs` |
 | **5** | **Node and trace the faces.** | `TopologyService.BuildFaces` |
-| 5a | Node the crossings, making each crossing point precise. This mints new arc identifiers | `NodeCrossings` |
+| 5a | Node the crossings, making each crossing point precise. This mints new arc identifiers. Then keep only the stretches of rim over land, by even-odd against the coast and lake shores | `NodeCrossings`, `RemoveRimOverWater` |
 | 5b | Contract the arcs the grid cannot represent and merge nodes that share a coordinate exactly | `ContractDegenerateArcs`, `MergeCoincidentNodes` |
-| 5c | Drop an arc that is another arc drawn a second time, told by the sliver the two enclose | `RemoveDuplicateArcs` |
+| 5c | Drop an arc that is another arc drawn a second time, told by the sliver the two enclose. Against the rim the test is 0.01 rather than 0.15 and the rim is the one kept: that cuts the hairlines where Antarctica's coast is the drawn rim, and leaves land drawn past the rim to 5i | `RemoveDuplicateArcs`, `GetMaximumSliverRadius` |
 | 5d | Drop a closed arc that leaves its node and comes back along its own line, where both half-edges claim one direction | `RemoveRetracedArcs` |
 | 5e | Prune an arc with nothing on the far end of it — an overshoot past a crossing encloses nothing | `RemoveDanglingArcs` |
 | 5f | Trace every ring by walking half-edges: at each node, one step clockwise from the way back | `TraceRings` |
 | 5g | Assign the outlines — which rings are faces and which bound the ocean — and check the total against what the coastline encloses | `AddFaces` |
 | 5h | Report the arcs that separate nothing: both sides in one ring means a chain that never closed | `ReportSeparatingNothing` |
+| 5i | Give each face beyond the rim the offset that takes it round the globe, or leave it out where its far side is ground already drawn — the halves of Chukcha and Mammoth Island, which overshoot onto each other | `RimService.Wrap` |
 | **6** | **Assign the faces to countries.** | `FaceAssignmentService.Assign` |
 | 6a | Tell water from land by what bounds a face, not by how it nests: a face bounded only by lake shore is water | `Assign` |
 | 6b | Claim a face by how much of it a country covers, matching faces to countries rather than to single shapes | `Assign` |
 | 6c | Absorb an unclaimed land face into the neighbour it shares the most border with | `Assign` |
 | **7** | **Assemble and write.** | |
-| 7a | Dissolve each country by **walking the arcs** that bound its faces — never by unioning them | `AssemblyService.Assemble`, `TopologyService.DissolveFaces` |
-| 7b | Unproject, memoized per SVG coordinate, so both sides of a border get literally the same numbers | `ConvertCommand.Unproject`, `WinkelTripelProjectionService` |
+| 7a | Dissolve each country by **walking the arcs** that bound its faces — never by unioning them. The rim is never dissolved, so a country it crosses comes out as a shape either side | `AssemblyService.Assemble`, `TopologyService.DissolveFaces` |
+| 7a' | Give each wrapped shape its own copy of the rim arcs it meets, since the two sides are written 360 degrees apart, and return each arc's offset | `RimService.Twin` |
+| 7b | Unproject, memoized per SVG coordinate, so both sides of a border get literally the same numbers. The rim goes into the memo first at exactly ±180, and a wrapped shape's offset is added after the memo. Nothing is clamped | `ConvertCommand.Unproject`, `UnprojectRim`, `WinkelTripelProjectionService` |
 | 7c | Round to six decimals, not four: four is coarser than the noding grid and would put distinct nodes on top of each other | `ConvertCommand.Round` |
 | 7d | Turn every ring the way RFC 7946 asks, decided in output coordinates | `ConvertCommand.Orient`, `RingExtensions.GetWinding` |
 | 7e | Leave out a ring that encloses nothing as written, and a country left with no ring | `ConvertCommand.Filter` |
@@ -76,9 +79,9 @@ Steps 6 and 7a run once per layer: the national layer first, with unclaimed face
 
 ### The models
 
-* `Arc` — interior coordinates plus two *mutable* `Node` references, so welding can re-point an end without rebuilding anything. `GetFullCoordinates()` is start node + interior + end node. `IsClosed` is `StartNode == EndNode`. `ArcKind` is `Border`, `Substate`, `Coast` or `Lake`.
+* `Arc` — interior coordinates plus two *mutable* `Node` references, so welding can re-point an end without rebuilding anything. `GetFullCoordinates()` is start node + interior + end node. `IsClosed` is `StartNode == EndNode`. `ArcKind` is `Border`, `Substate`, `Coast`, `Lake` or `Rim`.
 * `DirectedArc(Arc, bool IsReversed)` — a half-edge. `StartNode`/`EndNode` flip with `IsReversed`.
-* `Face(Shell, Holes)` — rings of `DirectedArc`, with an `Owner` once step 6 has run.
+* `Face(Shell, Holes)` — rings of `DirectedArc`, with an `Owner` once step 6 has run and a `LongitudeOffset` of ±360 once 5i has found it beyond the rim.
 * `ArcGraph` — the arcs, nodes and faces, and the only place identifiers are minted.
 * `Country` holds `Shape`s, and a `Shape` carries both its `Polygon` and the `DirectedArc` rings it was walked from. That is what lets the TopoJSON fall out of the graph rather than be recovered by comparing coordinates.
 * `RingExtensions` — the single winding rule. `GetWinding()` answers 1 / −1 / 0, the 0 meaning "encloses nothing" within a band of 1e-12. **Both writers go through it** so neither can disagree with the other about a ring.
@@ -96,7 +99,7 @@ C:/Users/frank/.dotnet/dotnet.exe run --project Erpe.Altera.Map/Erpe.Altera.Map.
 
 A full run is about a hundred seconds. Write outputs to the scratchpad, not into the repo.
 
-**The test suite passes clean: 1008 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1008 passing, 0 failing").
+**The test suite passes clean: 1027 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1027 passing, 0 failing").
 
 ## Conventions that will fail the build if ignored
 
@@ -133,14 +136,15 @@ Four traps worth knowing:
 
 ## State and open items
 
-Measured on `Altera_Data_Generating_Map_20261014.svg`, the export in use since mid-October.
+Measured on `Altera_Data_Generating_Map 20261022.svg`, the export of 22 October. Note the space in the name where the earlier one had an underscore.
 
 * **1225 countries** in the national layer and 1577 in the substate layer, every one of them with geometry.
-* **7000 faces** traced, covering 5,854,540.0 of the 5,855,297.0 square units the coastline encloses. 2 unclaimed faces, both absorbed into their neighbours.
+* **7007 faces** traced, covering 5,854,339.3 of the 5,855,095.4 square units the coastline encloses. 2 unclaimed faces, both absorbed into their neighbours.
 * **No arc separates nothing**, and no arc end is left loose.
-* The sharing check, over 1,356,022 segments: 271,018 shared exactly from both sides, and **0 wound the same way, 0 used twice by one country, 0 used by three or more rings**. 3 segments (0.000%) are unaccounted for.
-* **Every ring survives every tolerance**: 6505 of 6505 in the national layer at 0.001 and at 0.01, the floor raised on 4 arcs to keep it so.
-* **0 clockwise shells and 0 counter-clockwise holes** — 6145 shells and 360 holes, all the right way round. Nothing reports this; it is checked by reading the written file.
+* The sharing check, over 1,357,447 segments: 271,017 shared exactly from both sides, and **0 wound the same way, 0 used twice by one country, 0 used by three or more rings**. 3 segments (0.000%) are unaccounted for.
+* **Every ring survives every tolerance**: 6509 of 6509 in the national layer at 0.001 and at 0.01, the floor raised on 2 arcs and on 10 to keep it so.
+* **0 clockwise shells and 0 counter-clockwise holes** — 6149 shells and 360 holes, all the right way round. Nothing reports this; it is checked by reading the written file.
+* **Every longitude lies in [-180, 180]**, in all three resolutions. Nine shapes are drawn past the rim. Anian-23 lies wholly beyond it and is taken round whole; the far parts of Anian-21, -22 and -43 are cut at the rim and taken round, 4 faces in all; the overshoots of Chukcha's and Mammoth Island's two halves land on the other half and are left out, 4 faces and 133.6 square units; Antarctica's hairlines along both edges are cut in 5c. Nothing reports the range either.
 
 The run finishes with **no errors**. Its 24 warnings are the per-case reports of what it corrected — 14 duplicated tracer stretches and 9 tracers cut back off the shore, each named with where it is — plus one that is the first open item below.
 
@@ -149,7 +153,7 @@ Open:
 * **1 hole lands in the band the gap threshold was chosen to avoid**, between 0.10 and 0.19 on the area-to-length ratio, which was empty on the earlier export. Lakes and gaps are no longer cleanly separated on this one. `CoastlineService`'s constants say what that figure rests on; it wants watching rather than nudging.
 * **2 faces are claimed by more than one country**, both too small to be reported individually.
 * **3 unaccounted segments**, 0.000% of the boundary, which is the output's six decimals showing rather than a border with one side to it.
-* Two rings enclose nothing before simplification ever runs and are dropped on the way out: **Anian-23's shell** — the islet drawn *outside* the rim, which the unprojection's clamp at longitude 180 flattens onto the antimeridian — and **Namaquab-0's hole 1**. Anian's is a drawing error in the source map and no code here can repair it.
+* One ring encloses nothing before simplification ever runs and is dropped on the way out: **Namaquab-0's hole 1**. Anian-23's shell was a second until the unprojection stopped clamping at longitude 180; it is now taken round the rim.
 * **A hidden group would still be read.** The visibility rule asks the element, not its ancestors, and hiding a whole layer is what Illustrator does.
 
 Known input errors are fixed in the source SVG by the user, not worked around here — duplicate Martinique and Iouanorre shapes went that way, as did an island present in the Substates layer but missing from the Country layer, and the tracer whose absence left Iveria and Ossetia sharing a face was drawn on 15 October, which took the arcs separating nothing from 4 to 1. Hiding an element counts as saying it is not part of the map: two hidden paths in `Border_Tracers` took the last of those away.
