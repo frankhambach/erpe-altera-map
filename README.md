@@ -14,9 +14,9 @@ The input is not a partition. The drawn country shapes overlap, leave gaps, and 
 | **2** | Cut out the stretches a tracer draws twice: whole lines drawn over each other, and needles where one doubles back along itself. |
 | **3** | Union the country shapes into the landmass and take its outline as the coast. Each hole is a lake or a gap between shapes, told apart by its **hydraulic radius** — area over perimeter, which measures thinness and smallness at once. Gaps are filled, lakes are kept as their own kind of arc, and the borders drawn across either are cut back to the water's edge. |
 | **4** | Weld the loose tracer ends: ends within 0.5 units of each other become one node, and an end within 3 units of another arc is threaded into it as a node. |
-| **5** | Node the remaining crossings, then trace every face by walking half-edges — at each node, one step clockwise from the way back. Arcs that cannot be traced are removed first: arcs the noding grid cannot represent, one line drawn twice as two arcs, overshoots dangling past a crossing, and arcs that run out and back along their own line. |
+| **5** | Cut the land at the antimeridian: the rim, traced from the projection, is noded in with everything else and kept only where it crosses land. Node the remaining crossings, then trace every face by walking half-edges — at each node, one step clockwise from the way back. Arcs that cannot be traced are removed first: arcs the noding grid cannot represent, one line drawn twice as two arcs, overshoots dangling past a crossing, and arcs that run out and back along their own line. Each face drawn beyond the rim is then taken round to the other side of the map, or left out where its far side is ground already drawn. |
 | **6** | Assign each face to a country by how much of it that country covers. A face bounded only by lake shore is water, and a face nobody claims is absorbed into the neighbour it shares the most border with. |
-| **7** | Dissolve each country by **walking the arcs** that bound its faces, not by unioning them. Unproject, turn every ring the way RFC 7946 asks, simplify for the coarse outputs, and write the GeoJson and the topology. |
+| **7** | Dissolve each country by **walking the arcs** that bound its faces, not by unioning them. The rim is never dissolved, so a country it crosses comes out as one polygon either side of it, meeting at exactly ±180 — the antimeridian cut RFC 7946 asks for — and no longitude lies outside ±180. Unproject, turn every ring the way RFC 7946 asks, simplify for the coarse outputs, and write the GeoJson and the topology. |
 | **8** | Verify: count every segment of the output and check that each inland one is used exactly twice, once from each side and in opposite directions, with the same coordinates. |
 
 The algorithms the pipeline rests on:
@@ -30,7 +30,7 @@ The algorithms the pipeline rests on:
 
 ### convert
 
-Converts an SVG world map into GeoJson and TopoJSON. This expects the SVG file to contain an SVG group with the ID `Rim` containing the outline of the projected world map. Only shapes within SVG groups with IDs `Country_Shapes` or `Substate_Shapes` will be converted to GIS data, and the border network comes from the groups `Border_Tracers` and `Substate_Tracers`.
+Converts an SVG world map into GeoJson and TopoJSON. This expects the SVG file to contain an SVG group with the ID `Rim` containing the outline of the projected world map. The rim frames the map, fixing where the projection lies on the page; the antimeridian the land is cut along is traced from the projection itself, so editing the drawn rim does not move the cut. Only shapes within SVG groups with IDs `Country_Shapes` or `Substate_Shapes` will be converted to GIS data, and the border network comes from the groups `Border_Tracers` and `Substate_Tracers`.
 
 ```
 erpe-altera-map convert --in <file> --out <file> [--debug-svg]
@@ -56,10 +56,10 @@ With `--debug-svg`, four further files are written **in the coordinates of the s
 
 | File | Stage |
 | --- | --- |
-| `map-arcs-before.svg` | every arc of every kind, and the rim, after welding and before face tracing |
+| `map-arcs-before.svg` | every arc of every kind, the drawn rim, and the antimeridian traced from the projection, after welding and before face tracing |
 | `map-arcs-after.svg` | the same after tracing, with the crossings split and the untraceable arcs gone |
 | `map-faces.svg` | everything the border network encloses, one path per face |
-| `map-dropped.svg` | only the faces left out |
+| `map-dropped.svg` | only the faces left out, including those beyond the rim whose far side is already drawn |
 
 The two arc files are both written because step 5 mints new arc identifiers as it splits arcs at their crossings: anything the later reports name by number is absent from the earlier file.
 
