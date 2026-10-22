@@ -545,6 +545,98 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void DissolveFaces_ShouldKeepTheRim_WhenBothFacesAreGiven(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The one exception to dropping what the set has on both sides. What lies beyond the rim
+        // is taken round to the other side of the map once unprojected, so the two faces it divides
+        // end up 360 degrees apart, and a ring dissolved across it would jump the globe. It stays,
+        // and the country comes out as a shape either side of it.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Arc rim = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Rim, west, east, [(5.0, 0.0)]);
+        TopologyService service = CreateService(coordinateSequenceFactory);
+        service.BuildFaces(arcGraph, 0.0, 0.0);
+
+        DirectedArc[][] rings = [.. service.DissolveFaces(arcGraph, [[.. arcGraph.Faces]])[0]];
+
+        rings.Should().HaveCount(2);
+        rings.Should().AllSatisfy(ring => ring.Should().ContainSingle(directed => directed.Arc == rim));
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepOnlyTheStretchOfRimOverLand_WhenTheRimCrossesAnIsland(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The rim goes in running the whole height of the map. Over water it would join islands
+        // the map does not join, so once 5a has noded it into the coast only the stretch whose
+        // middle lies inside the coast is kept, and that one divides the island in two.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Coast,
+            [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Rim, [(5, -20), (5, 30)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
+
+        Arc rim = arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Rim).Subject;
+        rim.GetFullCoordinates().Select(coordinate => coordinate.Y).Should().BeEquivalentTo([0.0, 10.0]);
+        arcGraph.Faces.Should().HaveCount(2);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldDropTheCoast_WhenItRunsAlongTheRimByAHair(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // Antarctica's coast is the drawn rim, and the rim traced from the projection runs a
+        // thousandth of a unit from it. Between two crossings the pair encloses a hairline 5f
+        // cannot order, so it is one line drawn twice like any other - but the rim is kept, since
+        // it is where the map is cut and the coast only followed it. Here the sliver measures
+        // 0.005, inside the narrower test the rim is held to.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        Arc coast = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(5.0, 0.02)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, 10.0), (10.0, 10.0)]);
+        Arc rim = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Rim, west, east, [(5.0, -0.02)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
+
+        arcGraph.Arcs.Should().Contain(rim).And.NotContain(coast);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void BuildFaces_ShouldKeepTheCoast_WhenTheLandRunsPastTheRim(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // A sliver of 0.1 between two drawn lines is one line drawn twice, and against a border
+        // the coast would be the only one left. Against the rim it is land drawn past the edge of
+        // the map, Anian-21's islet and Mammoth Island's halves among them, and whether it is
+        // taken round to the other side or left out is for 5i to decide, not for this to cut off.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        Node west = arcGraph.AddNode(new Coordinate(0, 0));
+        Node east = arcGraph.AddNode(new Coordinate(10, 0));
+        Arc coast = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(5.0, 0.4)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, west, east, [(0.0, -10.0), (10.0, -10.0)]);
+        Arc rim = AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Rim, west, east, []);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
+
+        arcGraph.Arcs.Should().Contain(rim).And.Contain(coast);
+        arcGraph.Faces.Should().HaveCount(2);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void DissolveFaces_ShouldThrowArgumentNullException_WhenTheFacesAreNull(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

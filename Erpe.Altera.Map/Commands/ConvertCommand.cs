@@ -144,6 +144,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly IProjectionService projectionService;
 
+    private readonly IRimService rimService;
+
     private readonly ISimplificationService simplificationService;
 
     private readonly ISvgApproximationService svgApproximationService;
@@ -169,6 +171,7 @@ internal sealed class ConvertCommand : Command
         IDiagnosticsService diagnosticsService,
         ITopoJsonService topoJsonService,
         IVerificationService verificationService,
+        IRimService rimService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
     {
@@ -184,6 +187,7 @@ internal sealed class ConvertCommand : Command
         this.diagnosticsService = diagnosticsService;
         this.topoJsonService = topoJsonService;
         this.verificationService = verificationService;
+        this.rimService = rimService;
         this.geometryFactory = geometryFactory;
 
         Option<FileInfo> inOption = new("--in", "The SVG file to read country shapes from.");
@@ -296,9 +300,10 @@ internal sealed class ConvertCommand : Command
     // look as though two countries walked them the same way round. Both are 0 now, and of the 87
     // same-direction segments left every one is of zero length.
     //
-    // A ring of no area is left alone, because there is nothing to turn: Anian's shell of 17
-    // points and Namaquab's hole enclose nothing, and reversing either changes no coordinate.
-    // They are the degenerate spikes 8 reports, and a different thing to fix.
+    // A ring of no area is left alone, because there is nothing to turn: Namaquab's hole encloses
+    // nothing, and reversing it changes no coordinate. Anian's islet beyond the rim was another
+    // until it was taken round the rim rather than clamped onto it. It is the degenerate spike 8
+    // reports, and a different thing to fix.
     private static Polygon Orient(Polygon polygon)
     {
         return polygon.Factory.CreatePolygon(
@@ -400,7 +405,9 @@ internal sealed class ConvertCommand : Command
 
     // Every stretch of boundary that is allowed to have only one side to it: the sea coast
     // and the lake shores, and the boundary of each face 7a had to leave out, since the
-    // hole a dropped face leaves is bounded from the outside only.
+    // hole a dropped face leaves is bounded from the outside only. The rim as well, which
+    // has its two sides 360 degrees apart once what lies beyond it is wrapped, so that each
+    // copy of it is walked once - and walked once too where the far side was left out.
     private static Coordinate[][] GetOneSided(
         Dictionary<Arc, Coordinate[]> arcs,
         HashSet<(double X, double Y)>? removed,
@@ -408,7 +415,7 @@ internal sealed class ConvertCommand : Command
     {
         HashSet<Arc> oneSided =
         [
-            .. arcs.Keys.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake),
+            .. arcs.Keys.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake or ArcKind.Rim),
             .. dropped.SelectMany(face => face.Holes.Prepend(face.Shell))
                 .SelectMany(ring => ring)
                 .Select(directed => directed.Arc),
@@ -428,9 +435,9 @@ internal sealed class ConvertCommand : Command
     // depends on the geometry and not on the tolerance; per tolerance it cost 20 seconds of a
     // 120 second run and this way it costs nothing measurable.
     //
-    // Only the rings that enclose something to begin with. Anian's islet beyond the rim and
-    // Namaquab's lake of 1.3e-7 square units enclose nothing before a vertex is touched, so no
-    // floor can save them and there is no point asking.
+    // Only the rings that enclose something to begin with. Namaquab's lake of 1.3e-7 square units
+    // encloses nothing before a vertex is touched, so no floor can save it and there is no point
+    // asking.
     private static (LinearRing Ring, DirectedArc[] Arcs)[] GetProtectable(IEnumerable<Country> countries)
     {
         return
@@ -566,10 +573,10 @@ internal sealed class ConvertCommand : Command
 
             // A ring with no inside is not a ring. A consumer asked to fill it has nothing to
             // fill, it runs its own line twice over, and which way round it goes says nothing.
-            // Three things on this map leave one: an islet drawn beyond the rim, whose every
-            // longitude past 180 is clamped onto the antimeridian; a lake of 1.3e-7 square
-            // units, which is a line by the time it is rounded; and simplification thinning a
-            // shell down to a single there and back.
+            // Two things on this map leave one: a lake of 1.3e-7 square units, which is a line
+            // by the time it is rounded, and simplification thinning a shell down to a single
+            // there and back. An islet drawn beyond the rim was a third while every longitude
+            // past 180 was clamped onto the antimeridian; IRimService takes it round instead.
             if ((ring != null) && (Round(ring).GetWinding() == 0))
             {
                 string role = index == 0
@@ -628,34 +635,44 @@ internal sealed class ConvertCommand : Command
     // latitude. Memoizing on the SVG coordinate is what makes borders match: two
     // shapes that share a vertex in SVG space are guaranteed the same output value,
     // because Unproject is only ever evaluated once per distinct input.
+    //
+    // A shape wrapped round the rim takes the offset of the arcs it is made of, which IRimService
+    // has made the same for all of them, and adds it after the memo rather than in it. The memo
+    // stays one longitude per coordinate, and the offset is the same addition on the same value
+    // wherever that coordinate is written, in the shape or in the arc.
     private void Unproject(
         IEnumerable<Country> countries,
         Envelope sourceEnvelope,
-        Dictionary<Coordinate, Coordinate> unprojected)
+        Dictionary<Coordinate, Coordinate> unprojected,
+        IReadOnlyDictionary<Arc, double> offsets)
     {
         foreach (Shape shape in countries.SelectMany(country => country.Shapes))
         {
+            double offset = shape.Rings.Count == 0 ? 0.0 : offsets.GetValueOrDefault(shape.Rings[0][0].Arc);
             shape.Polygon = this.geometryFactory.CreatePolygon(
-                this.Unproject(shape.Polygon.Shell, sourceEnvelope, unprojected),
-                shape.Polygon.Holes.Select(hole => this.Unproject(hole, sourceEnvelope, unprojected)).ToArray());
+                this.Unproject(shape.Polygon.Shell, sourceEnvelope, unprojected, offset),
+                shape.Polygon.Holes.Select(hole => this.Unproject(hole, sourceEnvelope, unprojected, offset))
+                    .ToArray());
         }
     }
 
     private LinearRing Unproject(
         LinearRing linearRing,
         Envelope sourceEnvelope,
-        IDictionary<Coordinate, Coordinate> unprojected)
+        IDictionary<Coordinate, Coordinate> unprojected,
+        double offset)
     {
         return this.geometryFactory.CreateLinearRing(
             linearRing.CoordinateSequence.ToCoordinateArray()
-                .Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected))
+                .Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected, offset))
                 .ToArray());
     }
 
     private Coordinate Unproject(
         Coordinate coordinate,
         Envelope sourceEnvelope,
-        IDictionary<Coordinate, Coordinate> unprojected)
+        IDictionary<Coordinate, Coordinate> unprojected,
+        double offset)
     {
         if (!unprojected.TryGetValue(coordinate, out Coordinate? result))
         {
@@ -663,7 +680,30 @@ internal sealed class ConvertCommand : Command
             unprojected.Add(coordinate, result);
         }
 
-        return result.Copy();
+        return offset.Equals(0.0) ? result.Copy() : new Coordinate(result.X + offset, result.Y);
+    }
+
+    // The rim goes into the memo first and at exactly 180 degrees, east or west, whatever Newton's
+    // method makes of it. Its nodes are where the coast and the borders cross it, and those are
+    // put on the noding grid in the source map's units, so they come back a hair either side of
+    // the meridian. A coast ending at 180.0001 inside the rim would be past it, and once wrapped
+    // the far side would meet it at -179.9999 instead of where it is. Exactly 180 is where both
+    // sides meet, and offset by 360 it is exactly -180.
+    private void UnprojectRim(
+        ArcGraph arcGraph,
+        Envelope sourceEnvelope,
+        Dictionary<Coordinate, Coordinate> unprojected)
+    {
+        foreach (Coordinate coordinate in arcGraph.Arcs.Where(arc => arc.Kind == ArcKind.Rim)
+                     .SelectMany(arc => arc.GetFullCoordinates()))
+        {
+            if (!unprojected.ContainsKey(coordinate))
+            {
+                Coordinate result = this.projectionService.Unproject(
+                    this.projectionService.Rescale(coordinate, sourceEnvelope));
+                unprojected.Add(coordinate, new Coordinate(result.X < 0.0 ? -180.0 : 180.0, result.Y));
+            }
+        }
     }
 
     // Every drawn element of the rim, not only the paths: the two long curves are paths but the
@@ -764,6 +804,7 @@ internal sealed class ConvertCommand : Command
             arcGraph);
 
         this.correctionService.Weld(arcGraph, MergeTolerance, SplitTolerance);
+        this.rimService.AddArcs(arcGraph, sourceEnvelope);
 
         // One file per stage rather than one per kind, and both of them framed on the source
         // document's own view box so they open on top of the map and on each other.
@@ -798,6 +839,10 @@ internal sealed class ConvertCommand : Command
                 .ConfigureAwait(false);
         }
 
+        // Before the faces are assigned, so that a face left out here is claimed by nobody and
+        // absorbed into nobody, exactly as though it had never been drawn.
+        IReadOnlyList<Face> beyondRim = this.rimService.Wrap(arcGraph, sourceEnvelope);
+
         // One pass per layer, because a substate shape lies inside its country's shape and
         // passing both at once would report every substate face as belonging to two
         // countries. The national pass is assembled before the substate pass runs, since
@@ -808,7 +853,7 @@ internal sealed class ConvertCommand : Command
         Country[] substates = countries.Where(country => country.Type is CountryType.FederalState).ToArray();
 
         this.faceAssignmentService.Assign(arcGraph, national, true);
-        IReadOnlyList<Face> droppedNational = this.assemblyService.Assemble(arcGraph, national);
+        IReadOnlyList<Face> droppedNational = [.. beyondRim, .. this.assemblyService.Assemble(arcGraph, national)];
         IReadOnlyList<Face> dropped = droppedNational;
 
         if (debugSvg)
@@ -832,8 +877,13 @@ internal sealed class ConvertCommand : Command
                 .ConfigureAwait(false);
         }
 
+        // After both layers are assembled, since a stretch of rim is shared between them and
+        // the copy a wrapped shape gets has to be the same copy in either.
+        IReadOnlyDictionary<Arc, double> offsets = this.rimService.Twin(arcGraph, countries);
+
         Dictionary<Coordinate, Coordinate> unprojected = new Dictionary<Coordinate, Coordinate>();
-        this.Unproject(countries, sourceEnvelope, unprojected);
+        this.UnprojectRim(arcGraph, sourceEnvelope, unprojected);
+        this.Unproject(countries, sourceEnvelope, unprojected, offsets);
 
         // The arcs in the coordinates the output is written in. Simplification is measured
         // in the units of the tolerances, which are degrees, and taking the arcs through
@@ -842,7 +892,12 @@ internal sealed class ConvertCommand : Command
         Dictionary<Arc, Coordinate[]> arcs = arcGraph.Arcs.ToDictionary(
             arc => arc,
             arc => arc.GetFullCoordinates()
-                .Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected))
+                .Select(
+                    coordinate => this.Unproject(
+                        coordinate,
+                        sourceEnvelope,
+                        unprojected,
+                        offsets.GetValueOrDefault(arc)))
                 .ToArray());
 
         Country[] written = countries

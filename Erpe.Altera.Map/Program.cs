@@ -63,6 +63,7 @@ internal static class Program
             services.AddTransient<ITopoJsonService, TopoJsonService>();
             services.AddTransient<IVerificationService, VerificationService>();
             services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();
+            services.AddTransient<IRimService, RimService>();
             services.AddTransient<Command, ConvertCommand>();
 
             ServiceProvider serviceProvider = services.BuildServiceProvider();

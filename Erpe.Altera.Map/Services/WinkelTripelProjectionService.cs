@@ -30,6 +30,28 @@ public sealed class WinkelTripelProjectionService : IProjectionService
         this.geometryFactory = geometryFactory;
     }
 
+    // The forward projection, the same two equations Unproject solves by Newton's method. Not
+    // made precise, because what this is for is tracing the rim and finding where a point
+    // beyond it lands, and the noding grid is for the crossings 5a makes and nothing else.
+    public Coordinate Project(Coordinate coordinate)
+    {
+        ArgumentNullException.ThrowIfNull(coordinate);
+
+        const double cosPhi1 = 2 / Math.PI;
+
+        double lambda = (coordinate.X / 180.0) * Math.PI;
+        double phi = (coordinate.Y / 180.0) * Math.PI;
+        double cosPhi = Math.Cos(phi);
+        double alpha = Math.Acos(cosPhi * Math.Cos(lambda * 0.5));
+
+        // Alpha over its sine, which tends to one at the centre of the map, where both are zero.
+        double ratio = Math.Abs(alpha) < Epsilon ? 1.0 : alpha / Math.Sin(alpha);
+
+        return new Coordinate(
+            0.5 * ((2.0 * cosPhi * Math.Sin(lambda * 0.5) * ratio) + (lambda * cosPhi1)),
+            0.5 * ((Math.Sin(phi) * ratio) + phi));
+    }
+
     /// <summary>
     /// Rescales the given coordinate from the source envelope to the Winkel Tripel projection envelope.
     /// </summary>
@@ -47,6 +69,26 @@ public sealed class WinkelTripelProjectionService : IProjectionService
         double y = -(WinkelTripelEnvelope.MinY
             + (((coordinate.Y - sourceEnvelope.MinY) / (sourceEnvelope.MaxY - sourceEnvelope.MinY))
                 * (WinkelTripelEnvelope.MaxY - WinkelTripelEnvelope.MinY)));
+        return new Coordinate(x, y);
+    }
+
+    /// <summary>
+    /// Rescales the given coordinate from the Winkel Tripel projection envelope back to the source envelope.
+    /// </summary>
+    /// <param name="coordinate">The coordinate in the Winkel Tripel projection envelope.</param>
+    /// <param name="sourceEnvelope">The source envelope the coordinate is rescaled to.</param>
+    /// <returns>A new coordinate in the source envelope, the inverse of <see cref="Rescale"/>.</returns>
+    public Coordinate Unscale(Coordinate coordinate, Envelope sourceEnvelope)
+    {
+        ArgumentNullException.ThrowIfNull(coordinate);
+        ArgumentNullException.ThrowIfNull(sourceEnvelope);
+
+        double x = sourceEnvelope.MinX
+            + (((coordinate.X - WinkelTripelEnvelope.MinX) / (WinkelTripelEnvelope.MaxX - WinkelTripelEnvelope.MinX))
+                * (sourceEnvelope.MaxX - sourceEnvelope.MinX));
+        double y = sourceEnvelope.MinY
+            + (((-coordinate.Y - WinkelTripelEnvelope.MinY) / (WinkelTripelEnvelope.MaxY - WinkelTripelEnvelope.MinY))
+                * (sourceEnvelope.MaxY - sourceEnvelope.MinY));
         return new Coordinate(x, y);
     }
 
@@ -145,19 +187,17 @@ public sealed class WinkelTripelProjectionService : IProjectionService
         return this.CreateCoordinate(lambda, phi);
     }
 
+    // A longitude past 180 is kept rather than clamped onto the antimeridian. Clamping flattened
+    // whatever was drawn beyond the rim into a line along it, which lost Anian-23 whole - an islet
+    // lying entirely past the eastern rim, at 180.04 to 180.38 - and left a zigzag of no width
+    // along the meridian wherever a coast overshot it. IRimService cuts the land at the rim and
+    // takes the far part round to the other side, and it needs the real longitude to do that.
+    // Newton's method converges out there as it does inside: nothing on the map comes back with
+    // the warning below.
     private Coordinate CreateCoordinate(double lambda, double phi)
     {
         double x = (lambda / Math.PI) * 180.0;
         double y = (phi / Math.PI) * 180.0;
-        if (x > 180.0)
-        {
-            x = 180.0;
-        }
-
-        if (x < -180.0)
-        {
-            x = -180.0;
-        }
 
         return new Coordinate(
             this.geometryFactory.PrecisionModel.MakePrecise(x),

@@ -37,17 +37,18 @@ public class RingExtensionsTests
     {
         // A spike out and back encloses no area, so it has no winding and turning it would change
         // no coordinate. Both writers leave such a ring exactly as it is, which is the only way
-        // they can agree about it. Anian carries one of 17 points and Namaquab one as a hole.
+        // they can agree about it. Namaquab carries one as a hole.
         Ring([(0, 0), (10, 0), (20, 0), (10, 0)]).GetWinding().Should().Be(0);
     }
 
     [Test]
     public void GetWinding_ShouldReturnNeither_WhenEveryPointOfTheRingIsOnOneMeridian()
     {
-        // Anian has an islet drawn beyond the rim, and every longitude past 180 is clamped onto
-        // the antimeridian, so all seventeen of its points arrive with the same x. It wanders in
+        // Anian has an islet drawn beyond the rim, and while every longitude past 180 was clamped
+        // onto the antimeridian all seventeen of its points arrived with the same x. It wanders in
         // latitude and comes back, which no spike out and straight back does, and it still
-        // encloses nothing: the whole of it is one line.
+        // encloses nothing: the whole of it is one line. Nothing is clamped any more, but a ring
+        // like this is still one the winding has to answer for.
         Coordinate[] ring = Ring(
             [(180, 50.9186), (180, 50.9091), (180, 50.8995), (180, 50.9061), (180, 51.0105), (180, 50.9302)]);
 

@@ -16,6 +16,11 @@ public sealed class Face(
 
     public int Id { get; } = id;
 
+    // What 7b adds to every longitude of the face: -360 for a face drawn beyond the eastern
+    // rim, +360 for one beyond the western, and 0 for the rest, which is nearly all of them.
+    // Set by IRimService.Wrap once the faces are traced.
+    public double LongitudeOffset { get; set; }
+
     public Country? Owner { get; set; }
 
     public ImmutableArray<DirectedArc> Shell { get; } = shell;

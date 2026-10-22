@@ -112,6 +112,78 @@ public class WinkelTripelProjectionServiceTests
             typeof(WinkelTripelProjectionService).GetMethod(nameof(WinkelTripelProjectionService.Rescale)));
     }
 
+    [InlineAutoCustomizedData(-1, 1, -1, 1, 0.5, -0.5)]
+    [InlineAutoCustomizedData(1, 5, 1, 5, 2, 4)]
+    [InlineAutoCustomizedData(-5, -1, -5, -1, -6, 0)]
+    [Test]
+    public void Unscale_ShouldReturnOriginalCoordinate_WhenGivenRescaledCoordinate(
+        double envelopeMinimumX,
+        double envelopeMaximumX,
+        double envelopeMinimumY,
+        double envelopeMaximumY,
+        double x,
+        double y,
+        GeometryFactory geometryFactory)
+    {
+        var service = new WinkelTripelProjectionService(geometryFactory);
+        var envelope = new Envelope(envelopeMinimumX, envelopeMaximumX, envelopeMinimumY, envelopeMaximumY);
+
+        var result = service.Unscale(service.Rescale(new Coordinate(x, y), envelope), envelope);
+
+        result.X.Should().BeApproximately(x, 0.0000000001);
+        result.Y.Should().BeApproximately(y, 0.0000000001);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void Unscale_ThrowsArgumentNullException_WhenArgumentsAreNull(
+        GeometryFactory geometryFactory,
+        GuardClauseAssertion assertion)
+    {
+        assertion.Verify(
+            typeof(WinkelTripelProjectionService).GetMethod(nameof(WinkelTripelProjectionService.Unscale)));
+    }
+
+    [InlineAutoData(0, 0, 0, 0)]
+    [InlineAutoData(180, 0, (Math.PI + 2) / 2, 0)]
+    [InlineAutoData(-180, 0, -(Math.PI + 2) / 2, 0)]
+    [InlineAutoData(180, 90, 1, Math.PI / 2)]
+    [InlineAutoData(-180, -90, -1, -Math.PI / 2)]
+    [Test]
+    public void Project_ShouldReturnEdgeOfEnvelope_ForEdgeOfGlobe(
+        double longitude,
+        double latitude,
+        double expectedX,
+        double expectedY,
+        WinkelTripelProjectionService winkelTripelProjectionService)
+    {
+        Coordinate result = winkelTripelProjectionService.Project(new Coordinate(longitude, latitude));
+
+        result.X.Should().BeApproximately(expectedX, 0.0000000001);
+        result.Y.Should().BeApproximately(expectedY, 0.0000000001);
+    }
+
+    // Past the rim as well as inside it, since finding where land drawn beyond the rim lands once
+    // taken round the globe is what Project is for.
+    [InlineAutoData(45, 30)]
+    [InlineAutoData(-120, -60)]
+    [InlineAutoData(179.9, 85)]
+    [InlineAutoData(180.38, 51)]
+    [InlineAutoData(-180.2, 50.7)]
+    [InlineAutoData(190, -40)]
+    [Test]
+    public void Project_ShouldReturnCoordinateUnprojectInverts(
+        double longitude,
+        double latitude,
+        WinkelTripelProjectionService winkelTripelProjectionService)
+    {
+        Coordinate result = winkelTripelProjectionService.Unproject(
+            winkelTripelProjectionService.Project(new Coordinate(longitude, latitude)));
+
+        result.X.Should().BeApproximately(longitude, 0.000001);
+        result.Y.Should().BeApproximately(latitude, 0.000001);
+    }
+
     [InlineAutoData(-(Math.PI + 2) / 2, 0, -180, 0)]
     [InlineAutoData((Math.PI + 2) / 2, 0, 180, 0)]
     [InlineAutoData(-1.0000000000, -1.5707963268, -180, -90)]
@@ -831,27 +903,27 @@ public class WinkelTripelProjectionServiceTests
         result.Y.Should().BeApproximately(expectedY, 0.000001);
     }
 
-    [InlineAutoData(-0.7864149339, -1.6387660303, -180, -80)]
-    [InlineAutoData(-1.0555555556, -1.5707963268, -180, -90)]
-    [InlineAutoData(-1.3299331101, -1.4791398913, -180, -80)]
-    [InlineAutoData(-1.6011556165, -1.3632401757, -180, -70)]
-    [InlineAutoData(-1.8604425558, -1.2233139926, -180, -60)]
-    [InlineAutoData(-2.0989328411, -1.0604315131, -180, -50)]
-    [InlineAutoData(-2.3080595210, -0.8765609362, -180, -40)]
-    [InlineAutoData(-2.4799719059, -0.6745636621, -180, -30)]
-    [InlineAutoData(-2.6079731813, -0.4581289973, -180, -20)]
-    [InlineAutoData(-2.6869315111, -0.2316436597, -180, -10)]
-    [InlineAutoData(-2.7136183450, 0.0000000000, -180, 0)]
-    [InlineAutoData(-2.6869315111, 0.2316436597, -180, 10)]
-    [InlineAutoData(-2.6079731813, 0.4581289973, -180, 20)]
-    [InlineAutoData(-2.4799719059, 0.6745636621, -180, 30)]
-    [InlineAutoData(-2.3080595210, 0.8765609362, -180, 40)]
-    [InlineAutoData(-2.0989328411, 1.0604315131, -180, 50)]
-    [InlineAutoData(-1.8604425558, 1.2233139926, -180, 60)]
-    [InlineAutoData(-1.6011556165, 1.3632401757, -180, 70)]
-    [InlineAutoData(-1.3299331101, 1.4791398913, -180, 80)]
-    [InlineAutoData(-1.0555555556, 1.5707963268, -180, 90)]
-    [InlineAutoData(-0.7864149339, 1.6387660303, -180, 80)]
+    [InlineAutoData(-0.7864149339, -1.6387660303, -190, -80)]
+    [InlineAutoData(-1.0555555556, -1.5707963268, -190, -90)]
+    [InlineAutoData(-1.3299331101, -1.4791398913, -190, -80)]
+    [InlineAutoData(-1.6011556165, -1.3632401757, -190, -70)]
+    [InlineAutoData(-1.8604425558, -1.2233139926, -190, -60)]
+    [InlineAutoData(-2.0989328411, -1.0604315131, -190, -50)]
+    [InlineAutoData(-2.3080595210, -0.8765609362, -190, -40)]
+    [InlineAutoData(-2.4799719059, -0.6745636621, -190, -30)]
+    [InlineAutoData(-2.6079731813, -0.4581289973, -190, -20)]
+    [InlineAutoData(-2.6869315111, -0.2316436597, -190, -10)]
+    [InlineAutoData(-2.7136183450, 0.0000000000, -190, 0)]
+    [InlineAutoData(-2.6869315111, 0.2316436597, -190, 10)]
+    [InlineAutoData(-2.6079731813, 0.4581289973, -190, 20)]
+    [InlineAutoData(-2.4799719059, 0.6745636621, -190, 30)]
+    [InlineAutoData(-2.3080595210, 0.8765609362, -190, 40)]
+    [InlineAutoData(-2.0989328411, 1.0604315131, -190, 50)]
+    [InlineAutoData(-1.8604425558, 1.2233139926, -190, 60)]
+    [InlineAutoData(-1.6011556165, 1.3632401757, -190, 70)]
+    [InlineAutoData(-1.3299331101, 1.4791398913, -190, 80)]
+    [InlineAutoData(-1.0555555556, 1.5707963268, -190, 90)]
+    [InlineAutoData(-0.7864149339, 1.6387660303, -190, 80)]
     [InlineAutoData(-0.7272340804, -1.6461308265, -180, -80)]
     [InlineAutoData(-0.7272340804, 1.6461308265, -180, 80)]
     [InlineAutoData(-0.6700668899, -1.6536728165, -170, -80)]
@@ -926,29 +998,29 @@ public class WinkelTripelProjectionServiceTests
     [InlineAutoData(0.6700668899, 1.6536728165, 170, 80)]
     [InlineAutoData(0.7272340804, -1.6461308265, 180, -80)]
     [InlineAutoData(0.7272340804, 1.6461308265, 180, 80)]
-    [InlineAutoData(0.7864149339, -1.6387660303, 180, -80)]
-    [InlineAutoData(1.0555555556, -1.5707963268, 180, -90)]
-    [InlineAutoData(1.3299331101, -1.4791398913, 180, -80)]
-    [InlineAutoData(1.6011556165, -1.3632401757, 180, -70)]
-    [InlineAutoData(1.8604425558, -1.2233139926, 180, -60)]
-    [InlineAutoData(2.0989328411, -1.0604315131, 180, -50)]
-    [InlineAutoData(2.3080595210, -0.8765609362, 180, -40)]
-    [InlineAutoData(2.4799719059, -0.6745636621, 180, -30)]
-    [InlineAutoData(2.6079731813, -0.4581289973, 180, -20)]
-    [InlineAutoData(2.6869315111, -0.2316436597, 180, -10)]
-    [InlineAutoData(2.7136183450, 0.0000000000, 180, 0)]
-    [InlineAutoData(2.6869315111, 0.2316436597, 180, 10)]
-    [InlineAutoData(2.6079731813, 0.4581289973, 180, 20)]
-    [InlineAutoData(2.4799719059, 0.6745636621, 180, 30)]
-    [InlineAutoData(2.3080595210, 0.8765609362, 180, 40)]
-    [InlineAutoData(2.0989328411, 1.0604315131, 180, 50)]
-    [InlineAutoData(1.8604425558, 1.2233139926, 180, 60)]
-    [InlineAutoData(1.6011556165, 1.3632401757, 180, 70)]
-    [InlineAutoData(1.3299331101, 1.4791398913, 180, 80)]
-    [InlineAutoData(1.0555555556, 1.5707963268, 180, 90)]
-    [InlineAutoData(0.7864149339, 1.6387660303, 180, 80)]
+    [InlineAutoData(0.7864149339, -1.6387660303, 190, -80)]
+    [InlineAutoData(1.0555555556, -1.5707963268, 190, -90)]
+    [InlineAutoData(1.3299331101, -1.4791398913, 190, -80)]
+    [InlineAutoData(1.6011556165, -1.3632401757, 190, -70)]
+    [InlineAutoData(1.8604425558, -1.2233139926, 190, -60)]
+    [InlineAutoData(2.0989328411, -1.0604315131, 190, -50)]
+    [InlineAutoData(2.3080595210, -0.8765609362, 190, -40)]
+    [InlineAutoData(2.4799719059, -0.6745636621, 190, -30)]
+    [InlineAutoData(2.6079731813, -0.4581289973, 190, -20)]
+    [InlineAutoData(2.6869315111, -0.2316436597, 190, -10)]
+    [InlineAutoData(2.7136183450, 0.0000000000, 190, 0)]
+    [InlineAutoData(2.6869315111, 0.2316436597, 190, 10)]
+    [InlineAutoData(2.6079731813, 0.4581289973, 190, 20)]
+    [InlineAutoData(2.4799719059, 0.6745636621, 190, 30)]
+    [InlineAutoData(2.3080595210, 0.8765609362, 190, 40)]
+    [InlineAutoData(2.0989328411, 1.0604315131, 190, 50)]
+    [InlineAutoData(1.8604425558, 1.2233139926, 190, 60)]
+    [InlineAutoData(1.6011556165, 1.3632401757, 190, 70)]
+    [InlineAutoData(1.3299331101, 1.4791398913, 190, 80)]
+    [InlineAutoData(1.0555555556, 1.5707963268, 190, 90)]
+    [InlineAutoData(0.7864149339, 1.6387660303, 190, 80)]
     [Test]
-    public void Unproject_ShouldReturnNormalizedCoordinates_ForValuesOutsideOfBounds(
+    public void Unproject_ShouldReturnLongitudePastTheRim_ForValuesOutsideOfBounds(
         double x,
         double y,
         double expectedX,
