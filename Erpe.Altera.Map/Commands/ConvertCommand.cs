@@ -20,6 +20,7 @@ using Erpe.Altera.Map.Services;
 
 using NetTopologySuite.Features;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.IO.Converters;
 
 using Serilog;
@@ -270,6 +271,89 @@ internal sealed class ConvertCommand : Command
             };
 
         return (name, type);
+    }
+
+    // Which federation each substate belongs to. The substate layer groups its shapes one group per
+    // federation, directly under Substate_Shapes, and names each group in its own way:
+    // United_States_Substates for America, Grand_Praire_Confederacy_Substates for Ocarasta,
+    // Nuvalut_Substates for Nunangats. So the group says which substates belong together, and the
+    // country layer says whose they are: the country whose shapes contain the most of the group's
+    // area, asked of one point inside each substate shape. The federation keeps the name and the
+    // identity it has in the country layer, and becomes a federation if it was not marked as one -
+    // Nunangats, Ocarasta, Belgium and the Caribbean Union are not. Its own shape is not used again.
+    private static Dictionary<Country, Country> GetFederations(SvgElement[] shapesElements, Country[] countries)
+    {
+        SvgElement substateShapes = shapesElements.First(element => element.ID == "Substate_Shapes");
+        Dictionary<string, Country> substates = [];
+        foreach (Country country in countries.Where(country => country.Type == CountryType.FederalState))
+        {
+            substates.TryAdd(country.Id, country);
+        }
+
+        STRtree<(Polygon Polygon, Country Country)> nations = new STRtree<(Polygon Polygon, Country Country)>();
+        foreach (Country country in countries.Where(country => country.Type != CountryType.FederalState))
+        {
+            foreach (Polygon polygon in country.Shapes.Select(shape => shape.Polygon))
+            {
+                nations.Insert(polygon.EnvelopeInternal, (polygon, country));
+            }
+        }
+
+        Dictionary<Country, Country> federationOf = [];
+        foreach (SvgElement group in substateShapes.Children)
+        {
+            Country[] members =
+            [
+                .. group.Descendants()
+                    .Where(element => element.IsDrawnLinework())
+                    .Select(element => GetName(element, shapesElements))
+                    .Where(name => name is { Type: CountryType.FederalState })
+                    .Select(name => name!.Value.Name)
+                    .Distinct()
+                    .Where(substates.ContainsKey)
+                    .Select(name => substates[name]),
+            ];
+            Dictionary<Country, double> covered = [];
+            foreach (Polygon part in members.SelectMany(member => member.Shapes).Select(shape => shape.Polygon))
+            {
+                Point point = part.InteriorPoint;
+                foreach ((Polygon _, Country nation) in nations.Query(point.EnvelopeInternal)
+                             .Where(candidate => candidate.Polygon.Contains(point)))
+                {
+                    covered[nation] = covered.GetValueOrDefault(nation) + part.Area;
+                }
+            }
+
+            if (covered.Count == 0)
+            {
+                Log.Warning(
+                    "The {Members} substates of {Group} lie in no country's shape and belong to no federation.",
+                    members.Length,
+                    group.ID);
+                continue;
+            }
+
+            Country federation = covered.OrderByDescending(pair => pair.Value)
+                .ThenBy(pair => pair.Key.Id, StringComparer.Ordinal)
+                .First()
+                .Key;
+            double total = members.Sum(member => member.Shapes.Sum(shape => shape.Polygon.Area));
+            Log.Information(
+                "{Federation} is made of the {Members} substates of {Group}, {Share:0.0%} of their area inside its "
+                + "shape{Retyped}.",
+                federation.Id,
+                members.Length,
+                group.ID,
+                total > 0.0 ? covered[federation] / total : 0.0,
+                federation.Type == CountryType.FederatedState ? string.Empty : ", and becomes a federation");
+            federation.Type = CountryType.FederatedState;
+            foreach (Country member in members)
+            {
+                federationOf.TryAdd(member, federation);
+            }
+        }
+
+        return federationOf;
     }
 
     // The debug files sit beside the output and carry the same stem, so a run's stages stay
@@ -807,8 +891,18 @@ internal sealed class ConvertCommand : Command
                     .Select((polygon, index) => new Shape($"{grouping.Name}-{index}", polygon))))
             .ToArray();
 
+        // A country divided into substates is made of them and of nothing else: its own shape says
+        // which country the substates make up and what it is called, and no more. Two drawings of
+        // one coast disagree by a hair in thousands of places - Nunangats' shape and its 14
+        // substates' differ by 47.6 square units in 1524 pieces one way and 43.4 in 1461 the other,
+        // America's by 39.9 and 38.9 - and taking the coast from the country's while the faces went
+        // to the substates left pieces of land no substate claimed: 58 faces on this map, 52 of them
+        // islets of Nunangats', each a country of its own in the substate layer.
+        Dictionary<Country, Country> federationOf = GetFederations(shapesElements, countries);
+        HashSet<Country> federations = [.. federationOf.Values];
+
         double enclosedArea = this.coastlineService.AddArcs(
-            countries.Where(country => country.Type != CountryType.FederalState)
+            countries.Where(country => !federations.Contains(country))
                 .SelectMany(country => country.Shapes)
                 .Select(shape => shape.Polygon),
             arcGraph);
@@ -853,30 +947,36 @@ internal sealed class ConvertCommand : Command
         // absorbed into nobody, exactly as though it had never been drawn.
         IReadOnlyList<Face> beyondRim = this.rimService.Wrap(arcGraph, sourceEnvelope);
 
-        // One pass per layer, because a substate shape lies inside its country's shape and
-        // passing both at once would report every substate face as belonging to two
-        // countries. The national pass is assembled before the substate pass runs, since
-        // assigning a face sets the one owner it carries.
+        // One pass, over the countries the map is finally made of: the unitary states and the
+        // substates, a federation being nothing but its substates. Unclaimed faces are absorbed
+        // into a neighbour, a substate as readily as a country, since between them they cover all
+        // the land. The substates are assembled first, while the faces carry them; then each face
+        // of a substate is handed to its federation and the national layer is assembled from that.
+        Country[] finest = [.. countries.Where(country => !federations.Contains(country))];
         Country[] national = countries
             .Where(country => country.Type is CountryType.UnitaryState or CountryType.FederatedState)
             .ToArray();
         Country[] substates = countries.Where(country => country.Type is CountryType.FederalState).ToArray();
 
-        this.faceAssignmentService.Assign(arcGraph, national, true);
+        this.faceAssignmentService.Assign(arcGraph, finest, true);
+        IReadOnlyList<Face> substateDropped = this.assemblyService.Assemble(arcGraph, substates);
+        foreach (Face face in arcGraph.Faces)
+        {
+            if ((face.Owner != null) && federationOf.TryGetValue(face.Owner, out Country? federation))
+            {
+                face.Owner = federation;
+            }
+        }
+
         IReadOnlyList<Face> droppedNational = [.. beyondRim, .. this.assemblyService.Assemble(arcGraph, national)];
         IReadOnlyList<Face> dropped = droppedNational;
 
         if (debugSvg)
         {
-            // Between the two passes, because a face inside a substate belongs to a country
-            // and to a substate both and the second pass overwrites the owner with the
-            // substate. This is the only point at which the faces carry the national owner.
+            // With the national owners, which is what the faces carry from here on.
             await this.diagnosticsService.WriteFacesAsync(arcGraph.Faces, view, GetDebugFile(outFile, "-faces"))
                 .ConfigureAwait(false);
         }
-
-        this.faceAssignmentService.Assign(arcGraph, substates, false);
-        IReadOnlyList<Face> substateDropped = this.assemblyService.Assemble(arcGraph, substates);
 
         if (debugSvg)
         {

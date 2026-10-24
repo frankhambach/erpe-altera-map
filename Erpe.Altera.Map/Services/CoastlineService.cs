@@ -187,6 +187,8 @@ public sealed class CoastlineService : ICoastlineService
         List<Polygon> lakes = [];
         List<Coordinate[]> shells = [];
         List<(double Radius, double Length)> slits = [];
+        List<double> necks = [];
+        int pieces = 0;
         List<(double Radius, double Length)> needles = [];
         List<double> keptInlets = [];
         int lakeCount = 0;
@@ -205,8 +207,12 @@ public sealed class CoastlineService : ICoastlineService
             shells.Add(shell);
             arcGraph.AddArc(ArcKind.Coast, this.coordinateSequenceFactory.Create(shell));
 
-            foreach (LinearRing hole in polygon.Holes)
+            // Each hole in pieces, divided wherever it narrows to a neck - see SplitAtNecks - and
+            // each piece judged on its own as the whole hole was before.
+            foreach (LinearRing hole in polygon.Holes.SelectMany(
+                         drawn => this.SplitAtNecks(drawn, tracers, necks).Select(this.geometryFactory.CreateLinearRing)))
             {
+                ++pieces;
                 double ratio = this.GetAreaToLengthRatio(hole);
                 if ((ratio > GapRatioUpperBound) && (ratio < LakeRatioLowerBound))
                 {
@@ -295,6 +301,16 @@ public sealed class CoastlineService : ICoastlineService
                 slits.Max(slit => slit.Length),
                 slits.Max(slit => slit.Radius),
                 keptInlets.Count == 0 ? MaximumGapAreaToLengthRatio : keptInlets.Min());
+        }
+
+        if (necks.Count > 0)
+        {
+            Log.Information(
+                "Divided the holes at {Necks} necks into {Pieces} pieces before judging them, the widest neck "
+                + "{Widest:0.####} units across.",
+                necks.Count,
+                pieces,
+                necks.Max());
         }
 
         if (needles.Count > 0)
@@ -435,6 +451,98 @@ public sealed class CoastlineService : ICoastlineService
         return [.. coordinates];
     }
 
+    // The first neck along an open ring, as the index on one side of it and how many vertices on
+    // the other lies, or (-1, -1). Taken round the ring, past its end and on from its start: a gap
+    // straddling the vertex the ring happens to start at is a gap like any other, and the one on
+    // Magallanica's lake did - FillSlits does not wrap and carries that as a known limitation, and
+    // here it was what kept the gap on the lake once every other condition had been put right.
+    private static (int I, int T) FindNeck(
+        List<Coordinate> open,
+        bool counterClockwise,
+        Func<Coordinate, Coordinate, bool> isTraced)
+    {
+        int count = open.Count;
+        for (int i = 0; i < count; ++i)
+        {
+            double run = 0.0;
+            double area = 0.0;
+            for (int t = 1; t < count; ++t)
+            {
+                Coordinate previous = open[(i + t - 1) % count];
+                Coordinate current = open[(i + t) % count];
+                run += previous.Distance(current);
+                area += (previous.X * current.Y) - (current.X * previous.Y);
+                if (run > MaximumSlitSearch)
+                {
+                    break;
+                }
+
+                if ((run < MinimumSlitLength) || (open[i].Distance(current) > MaximumSlitWidth))
+                {
+                    continue;
+                }
+
+                // Closed where the return comes nearest, not where it first comes within the
+                // width: the ring is followed on for as long as it stays within it. A gap a hair
+                // wide is first within half a unit of its mouth half a unit down its far wall, and
+                // the line closing it there runs along the gap at so shallow an angle that the
+                // walls' own wiggles can cross it. Straight across the mouth they do not.
+                int best = t;
+                double bestArea = area;
+                double sum = area;
+                for (int u = t + 1; (u < count) && (open[i].Distance(open[(i + u) % count]) <= MaximumSlitWidth); ++u)
+                {
+                    Coordinate before = open[(i + u - 1) % count];
+                    Coordinate at = open[(i + u) % count];
+                    sum += (before.X * at.Y) - (at.X * before.Y);
+                    if (open[i].Distance(at) < open[i].Distance(open[(i + best) % count]))
+                    {
+                        (best, bestArea) = (u, sum);
+                    }
+                }
+
+                // Both pieces need three points to enclose anything, and the one closed by the
+                // neck must enclose the hole's inside rather than a spit of land.
+                int j = (i + best) % count;
+                double enclosed = (bestArea + ((open[j].X * open[i].Y) - (open[i].X * open[j].Y))) / 2.0;
+                bool isWater = (enclosed > 0.0) == counterClockwise;
+                bool isProper = ((best + 1) >= 3) && ((count - best + 1) >= 3);
+                if (isWater && isProper && !IsCrossed(open, i, j) && isTraced(open[i], open[j]))
+                {
+                    return (i, best);
+                }
+
+                // The first return and no other, as in FillSlits.
+                break;
+            }
+        }
+
+        return (-1, -1);
+    }
+
+    // Whether the line between two vertices of an open ring crosses any segment of it that does
+    // not end at either of them.
+    private static bool IsCrossed(List<Coordinate> open, int i, int j)
+    {
+        LineIntersector intersector = new RobustLineIntersector();
+        for (int k = 0; k < open.Count; ++k)
+        {
+            int next = (k + 1) % open.Count;
+            if ((k == i) || (k == j) || (next == i) || (next == j))
+            {
+                continue;
+            }
+
+            intersector.ComputeIntersection(open[i], open[j], open[k], open[next]);
+            if (intersector.HasIntersection)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // A ring that leaves a vertex, goes somewhere and comes back to within a hair of it without
     // enclosing anything on the way has drawn one line twice rather than gone round something.
     // Nothing is on the far side of such a run, so whatever is assembled from the ring walks its
@@ -548,6 +656,58 @@ public sealed class CoastlineService : ICoastlineService
                 Polygon polygon => [polygon],
                 _ => [],
             };
+    }
+
+    // A hole divided wherever its ring comes back to within MaximumSlitWidth of itself around a
+    // stretch of its own inside at least MinimumSlitLength long: the neck between a lake and a gap
+    // running into it, or between two lakes a gap joins. Each piece is then judged on its own.
+    //
+    // A federation drawn as its substates is where this arises. Two substates that do not quite
+    // meet leave a gap along their border, and where that border reaches a lake the gap and the
+    // lake are one hole. Judged whole it was neither: the gap added its two walls to the lake's
+    // perimeter and the border drawn along it ran through the hole, and three lakes on this map
+    // were judged gaps and given to the land - of 495, 98 and 19 square units, with 46, 55 and 37
+    // units of gap attached and the border crossing them 6.3, 31.1 and 50.8 times over. The two
+    // smaller ones share one gap. Cutting the gap off the lake, as 3c cuts a slit off the coast,
+    // is not enough for those two: seen from either lake, what runs off it is the gap and the
+    // other lake, which is not thin. Dividing at the necks gives two lakes and a gap.
+    //
+    // The tests are 3c's: the first return to within the width, after a run of at least the
+    // length and no more than the search, enclosing the inside of the hole and not a spit of land
+    // poking into it. A neck is only taken where the line closing it crosses no other part of the
+    // ring, so that every piece is a ring of its own.
+    //
+    // And only where a tracer comes as near the neck as its walls come to each other. A gap
+    // between two shapes lies along the border between them, so the border is at the neck it
+    // makes with a lake - through it or beside it, since the border need not run down the gap's
+    // middle - and a lake's own narrows have no border at them. Without this the rule took every
+    // wiggle of a lake shore that comes back on itself: on the country shapes, where the gaps it
+    // is for hardly arise, it changed 230 lakes by 9.4 square units between them and split one in
+    // two. With it, it changes 11 there, by 0.09 square units between them, each a hairline of gap
+    // along a border, and on the substates it gives back every lake the country shapes have.
+    private List<Coordinate[]> SplitAtNecks(LinearRing ring, STRtree<LineString> tracers, List<double> necks)
+    {
+        bool counterClockwise = Orientation.IsCCW(ring.Coordinates);
+        List<Coordinate[]> done = [];
+        Stack<List<Coordinate>> work = new Stack<List<Coordinate>>();
+        work.Push([.. ring.Coordinates.SkipLast(1)]);
+        while (work.Count > 0)
+        {
+            List<Coordinate> open = work.Pop();
+            (int i, int t) = FindNeck(open, counterClockwise, (start, end) => this.IsTraced(start, end, tracers));
+            if (i < 0)
+            {
+                done.Add([.. open, open[0]]);
+                continue;
+            }
+
+            int count = open.Count;
+            necks.Add(open[i].Distance(open[(i + t) % count]));
+            work.Push([.. Enumerable.Range(0, t + 1).Select(u => open[(i + u) % count])]);
+            work.Push([.. Enumerable.Range(0, count - t + 1).Select(u => open[(i + t + u) % count])]);
+        }
+
+        return done;
     }
 
     // Borders are drawn over lakes rather than stopping at them: 136 tracers in the sample
@@ -784,6 +944,18 @@ public sealed class CoastlineService : ICoastlineService
             new Coordinate((first.X + second.X) / 2.0, (first.Y + second.Y) / 2.0));
 
         return land.Query(point.EnvelopeInternal).Any(shell => shell.Contains(point));
+    }
+
+    // Whether a border or substate tracer comes within MaximumSlitWidth of the line between two
+    // points: as near as a gap's walls come to each other, which is as near as the border it lies
+    // along has to come to them.
+    private bool IsTraced(Coordinate start, Coordinate end, STRtree<LineString> tracers)
+    {
+        LineString line = this.geometryFactory.CreateLineString([start, end]);
+        Envelope envelope = line.EnvelopeInternal.Copy();
+        envelope.ExpandBy(MaximumSlitWidth);
+
+        return tracers.Query(envelope).Any(tracer => tracer.IsWithinDistance(line, MaximumSlitWidth));
     }
 
     // How far the tracers run through a hole, against the hole's own half-perimeter. For a

@@ -12,10 +12,10 @@ The input is not a partition. The drawn country shapes overlap, leave gaps, and 
 |------| --- |
 | **1** | Read the drawing: approximate its curves as lines, leave out linework too short to matter and anything the author has hidden, take the `Border_Tracers` and `Substate_Tracers` layers as arcs on shared nodes, and build the drawn country shapes as polygons. |
 | **2** | Cut out the stretches a tracer draws twice: whole lines drawn over each other, and needles where one doubles back along itself. |
-| **3** | Union the country shapes into the landmass and take its outline as the coast. Each hole is a lake or a gap between shapes, told apart by its **hydraulic radius** — area over perimeter, which measures thinness and smallness at once. Gaps are filled, lakes are kept as their own kind of arc, and the borders drawn across either are cut back to the water's edge. |
+| **3** | Union the country shapes into the landmass and take its outline as the coast — the unitary states and the substates, since a federation is made of its substates and its own shape only says which country they make up. Each hole, divided first where a gap along a border runs into a lake, is a lake or a gap between shapes, told apart by its **hydraulic radius** — area over perimeter, which measures thinness and smallness at once. Gaps are filled, lakes are kept as their own kind of arc, and the borders drawn across either are cut back to the water's edge. |
 | **4** | Weld the loose tracer ends: ends within 0.5 units of each other become one node, and an end within 3 units of another arc is threaded into it as a node. |
 | **5** | Cut the land at the antimeridian: the rim, traced from the projection, is noded in with everything else and kept only where it crosses land. Node the remaining crossings, then trace every face by walking half-edges — at each node, one step clockwise from the way back. Arcs that cannot be traced are removed first: arcs the noding grid cannot represent, one line drawn twice as two arcs, overshoots dangling past a crossing, and arcs that run out and back along their own line. Each face drawn beyond the rim is then taken round to the other side of the map, or left out where its far side is ground already drawn. |
-| **6** | Assign each face to a country by how much of it that country covers. A face bounded only by lake shore is water, and a face nobody claims is absorbed into the neighbour it shares the most border with. |
+| **6** | Assign each face to a unitary state or a substate by how much of it that shape covers; a federation is the faces of its substates. A face bounded only by lake shore is water, and a face nobody claims is absorbed into the neighbour it shares the most border with. |
 | **7** | Dissolve each country by **walking the arcs** that bound its faces, not by unioning them. The rim is never dissolved, so a country it crosses comes out as one polygon either side of it, meeting at exactly ±180 — the antimeridian cut RFC 7946 asks for — and no longitude lies outside ±180. Unproject, turn every ring the way RFC 7946 asks, simplify for the coarse outputs, and write the GeoJson and the topology. |
 | **8** | Verify: count every segment of the output and check that each inland one is used exactly twice, once from each side and in opposite directions, with the same coordinates. |
 
@@ -44,7 +44,7 @@ Writing `--out map.json` produces:
 
 | File | Contents |
 | --- | --- |
-| `map.json` | countries and substates together |
+| `map.json` | the unitary states and the substates together, which is a partition of the land as well |
 | `map-no-substates.json` | the national layer alone, which is a partition of the land |
 | `map-only-substates.json` | the substate layer alone, likewise |
 | `map-medium.json`, `map-low.json` | the same at simplification tolerances of 0.001 and 0.01 degrees |
