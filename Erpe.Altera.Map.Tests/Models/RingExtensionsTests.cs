@@ -37,7 +37,8 @@ public class RingExtensionsTests
     {
         // A spike out and back encloses no area, so it has no winding and turning it would change
         // no coordinate. Both writers leave such a ring exactly as it is, which is the only way
-        // they can agree about it. Namaquab carries one as a hole.
+        // they can agree about it. Namaquab carried one as a hole while the unprojection put
+        // degrees on a grid of 0.0001.
         Ring([(0, 0), (10, 0), (20, 0), (10, 0)]).GetWinding().Should().Be(0);
     }
 

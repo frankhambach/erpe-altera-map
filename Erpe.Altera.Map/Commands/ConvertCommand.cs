@@ -300,10 +300,10 @@ internal sealed class ConvertCommand : Command
     // look as though two countries walked them the same way round. Both are 0 now, and of the 87
     // same-direction segments left every one is of zero length.
     //
-    // A ring of no area is left alone, because there is nothing to turn: Namaquab's hole encloses
-    // nothing, and reversing it changes no coordinate. Anian's islet beyond the rim was another
-    // until it was taken round the rim rather than clamped onto it. It is the degenerate spike 8
-    // reports, and a different thing to fix.
+    // A ring of no area is left alone, because there is nothing to turn, and reversing it changes
+    // no coordinate. Namaquab's lake was one while the unprojection put degrees on a grid of
+    // 0.0001, and Anian's islet beyond the rim was another until it was taken round the rim rather
+    // than clamped onto it.
     private static Polygon Orient(Polygon polygon)
     {
         return polygon.Factory.CreatePolygon(
@@ -385,6 +385,16 @@ internal sealed class ConvertCommand : Command
                     Geometry = new MultiPolygon(
                         [.. country.Shapes.Select(shape => Orient(shape.Polygon))]),
                 };
+
+            // Rounded as a copy. The filter sets the ordinates of the coordinates it is handed, and
+            // those are the very objects the shapes hold, so rounding the shapes themselves would
+            // round every later pass's input as well - and not the arcs', which simplification
+            // decides by. Once the full detail was written, no coordinate a coarse pass meant to
+            // drop matched one in a ring any more: the 0.001 and 0.01 files came out unsimplified,
+            // larger than the full one, with 815,040 segments that were not shared. Unprojecting
+            // onto a grid of 0.0001 degrees hid it, since six decimals of such a number is the same
+            // number.
+            feature.Geometry = feature.Geometry.Copy();
             feature.Geometry.Apply(new RoundCoordinateSequenceFilter());
 
             feature.Attributes.Add("id", country.Id);
@@ -435,9 +445,9 @@ internal sealed class ConvertCommand : Command
     // depends on the geometry and not on the tolerance; per tolerance it cost 20 seconds of a
     // 120 second run and this way it costs nothing measurable.
     //
-    // Only the rings that enclose something to begin with. Namaquab's lake of 1.3e-7 square units
-    // encloses nothing before a vertex is touched, so no floor can save it and there is no point
-    // asking.
+    // Only the rings that enclose something to begin with. A ring that encloses nothing before a
+    // vertex is touched cannot be saved by any floor, so there is no point asking. Namaquab's lake
+    // of 1.3e-7 square units was one while the unprojection put degrees on a grid of 0.0001.
     private static (LinearRing Ring, DirectedArc[] Arcs)[] GetProtectable(IEnumerable<Country> countries)
     {
         return
@@ -573,10 +583,10 @@ internal sealed class ConvertCommand : Command
 
             // A ring with no inside is not a ring. A consumer asked to fill it has nothing to
             // fill, it runs its own line twice over, and which way round it goes says nothing.
-            // Two things on this map leave one: a lake of 1.3e-7 square units, which is a line
-            // by the time it is rounded, and simplification thinning a shell down to a single
-            // there and back. An islet drawn beyond the rim was a third while every longitude
-            // past 180 was clamped onto the antimeridian; IRimService takes it round instead.
+            // Simplification thinning a shell down to a single there and back leaves one. A lake
+            // of 1.3e-7 square units at Namaquab was a line while the unprojection put degrees on
+            // a grid of 0.0001, and an islet drawn beyond the rim was another while every
+            // longitude past 180 was clamped onto the antimeridian; neither is any more.
             if ((ring != null) && (Round(ring).GetWinding() == 0))
             {
                 string role = index == 0
