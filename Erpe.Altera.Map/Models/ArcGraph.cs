@@ -12,9 +12,17 @@ public sealed class ArcGraph(CoordinateSequenceFactory coordinateSequenceFactory
 {
     // Monotonic rather than derived from the collection counts, so that identifiers stay
     // stable once welding starts merging nodes and removing them from the graph.
-    private int nextArcId;
+    private readonly Identifiers identifiers = new Identifiers();
 
-    private int nextNodeId;
+    // A second graph minting from the same identifiers as this one, so that an arc or a node is
+    // named once across both. The economic zones are traced in a graph of their own over the
+    // land graph's coast and nodes, and a report or a debug file naming arc 11204 has to mean one
+    // arc whichever graph it came from.
+    public ArcGraph(ArcGraph other)
+        : this(other?.CoordinateSequenceFactory ?? throw new ArgumentNullException(nameof(other)))
+    {
+        this.identifiers = other.identifiers;
+    }
 
     public IList<Arc> Arcs { get; } = new List<Arc>();
 
@@ -44,15 +52,22 @@ public sealed class ArcGraph(CoordinateSequenceFactory coordinateSequenceFactory
 
     public Arc AddArc(ArcKind kind, Node startNode, Node endNode, CoordinateSequence coordinates)
     {
-        Arc arc = new Arc(this.nextArcId++, kind, startNode, endNode, coordinates);
+        Arc arc = new Arc(this.identifiers.NextArcId++, kind, startNode, endNode, coordinates);
         this.Arcs.Add(arc);
         return arc;
     }
 
     public Node AddNode(Coordinate coordinate)
     {
-        Node node = new Node(this.nextNodeId++, coordinate);
+        Node node = new Node(this.identifiers.NextNodeId++, coordinate);
         this.Nodes.Add(node);
         return node;
+    }
+
+    private sealed class Identifiers
+    {
+        public int NextArcId { get; set; }
+
+        public int NextNodeId { get; set; }
     }
 }

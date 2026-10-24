@@ -376,9 +376,7 @@ public sealed class TopologyService : ITopologyService
     // crosses land does it divide anything. Over water it would be a line through the ocean
     // joining islands the map does not join, and 5f would walk out along it and back. With every
     // crossing a node, each stretch lies wholly over land or wholly over water, and one point of
-    // it says which: a ray from it crosses the coast and the lake shores an odd number of times
-    // from land and an even number from water, a lake counting as water. Even-odd rather than
-    // nesting, because it needs nothing but the shore lines, and they are closed by now.
+    // it says which, asked of the shore lines by ShoreIndex.
     private static (int OverWater, int OverLand) RemoveRimOverWater(ArcGraph arcGraph)
     {
         Arc[] rim = [.. arcGraph.Arcs.Where(arc => arc.Kind == ArcKind.Rim)];
@@ -387,18 +385,7 @@ public sealed class TopologyService : ITopologyService
             return (0, 0);
         }
 
-        STRtree<(Coordinate Start, Coordinate End)> shore = new STRtree<(Coordinate Start, Coordinate End)>();
-        double maximumX = double.NegativeInfinity;
-        foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake))
-        {
-            Coordinate[] coordinates = arc.GetFullCoordinates();
-            for (int i = 0; i < (coordinates.Length - 1); ++i)
-            {
-                shore.Insert(new Envelope(coordinates[i], coordinates[i + 1]), (coordinates[i], coordinates[i + 1]));
-                maximumX = Math.Max(maximumX, Math.Max(coordinates[i].X, coordinates[i + 1].X));
-            }
-        }
-
+        ShoreIndex shore = new ShoreIndex(arcGraph.Arcs);
         int overWater = 0;
         foreach (Arc arc in rim)
         {
@@ -407,11 +394,7 @@ public sealed class TopologyService : ITopologyService
             Coordinate point = new Coordinate(
                 (coordinates[middle].X + coordinates[middle + 1].X) / 2.0,
                 (coordinates[middle].Y + coordinates[middle + 1].Y) / 2.0);
-            int crossings = point.X >= maximumX
-                ? 0
-                : shore.Query(new Envelope(point.X, maximumX, point.Y, point.Y))
-                    .Count(segment => IsCrossedByRay(segment, point));
-            if ((crossings % 2) == 0)
+            if (shore.IsOverWater(point))
             {
                 arcGraph.Arcs.Remove(arc);
                 ++overWater;
@@ -419,19 +402,6 @@ public sealed class TopologyService : ITopologyService
         }
 
         return (overWater, rim.Length - overWater);
-    }
-
-    // Whether a ray from the point towards increasing x crosses the segment. Half-open in y, so
-    // that a ray through a vertex counts it for one of the two segments meeting there, not both.
-    private static bool IsCrossedByRay((Coordinate Start, Coordinate End) segment, Coordinate point)
-    {
-        (Coordinate start, Coordinate end) = segment;
-        if ((start.Y > point.Y) == (end.Y > point.Y))
-        {
-            return false;
-        }
-
-        return (start.X + (((point.Y - start.Y) / (end.Y - start.Y)) * (end.X - start.X))) > point.X;
     }
 
     // An arc that reads the same forwards as backwards is one line drawn twice inside a single

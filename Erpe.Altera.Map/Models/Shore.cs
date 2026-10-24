@@ -9,13 +9,17 @@ using NetTopologySuite.Geometries;
 
 // A coast or lake shore arc as the economic zones see it: the country whose land lies behind
 // it, and the arc's full line in longitude and latitude, with the offset of a face taken round
-// the rim already added. Every arc has one owner, because an arc ends wherever a border meets
-// it, and that is what makes the country of a sample a property of the arc it was taken from.
-public sealed class Shore(Country owner, Arc arc, IReadOnlyList<Coordinate> coordinates)
+// the rim already added. The offset is kept as well, for the points the
+// zones unproject along the arc themselves. Every arc has one owner, because an arc ends wherever
+// a border meets it, and that is what makes the country of a sample a property of the arc it was
+// taken from.
+public sealed class Shore(Country owner, Arc arc, IReadOnlyList<Coordinate> coordinates, double longitudeOffset)
 {
     public Arc Arc { get; } = arc;
 
     public IReadOnlyList<Coordinate> Coordinates { get; } = coordinates;
+
+    public double LongitudeOffset { get; } = longitudeOffset;
 
     public Country Owner { get; } = owner;
 }

@@ -841,7 +841,8 @@ internal sealed class ConvertCommand : Command
                             coordinate => this.projectionService.Unproject(
                                 this.projectionService.Rescale(coordinate, sourceEnvelope)))
                         .Select(coordinate => new Coordinate(coordinate.X + pair.Value.LongitudeOffset, coordinate.Y)),
-                ]));
+                ],
+                pair.Value.LongitudeOffset));
     }
 
     // The zone boundaries back in the source map's coordinates, for the debug file and nothing
@@ -1043,14 +1044,25 @@ internal sealed class ConvertCommand : Command
         IReadOnlyList<Face> droppedNational = [.. beyondRim, .. this.assemblyService.Assemble(arcGraph, national)];
         IReadOnlyList<Face> dropped = droppedNational;
 
-        IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(this.GetShores(arcGraph, sourceEnvelope));
+        Shore[] shores = [.. this.GetShores(arcGraph, sourceEnvelope)];
+        IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(shores, sourceEnvelope);
+        ArcGraph water = this.economicZoneService.AddArcs(arcGraph, shores, zones, sourceEnvelope);
         if (debugSvg)
         {
+            // Before cutting, the lines as they are found on the sphere, over land as well as
+            // water; after, the arcs of the water graph with the shores they meet. The two graphs
+            // mint from one set of identifiers, so the second file can carry both.
             await this.diagnosticsService.WriteArcsAsync(
                     this.GetZoneArcs(zones, sourceEnvelope),
                     rim,
                     view,
                     GetDebugFile(outFile, "-zones"))
+                .ConfigureAwait(false);
+            await this.diagnosticsService.WriteArcsAsync(
+                    water.Arcs.Concat(arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake)),
+                    rim,
+                    view,
+                    GetDebugFile(outFile, "-water"))
                 .ConfigureAwait(false);
         }
 

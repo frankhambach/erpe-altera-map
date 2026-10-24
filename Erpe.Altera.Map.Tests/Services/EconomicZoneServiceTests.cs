@@ -24,6 +24,9 @@ public class EconomicZoneServiceTests
 
     private const double ZoneRadius = 370.4;
 
+    // A map of roughly the source's proportions, so that a unit of it is a few kilometres.
+    private static readonly Envelope SourceEnvelope = new Envelope(0.0, 6000.0, 0.0, 3700.0);
+
     [AutoCustomizedData]
     [Test]
     public void GetBoundaries_ShouldDrawTheMedianLineHalfwayAcross_WhenTwoCountriesFaceEachOtherOverAStrait(
@@ -43,7 +46,7 @@ public class EconomicZoneServiceTests
 
         ZoneBoundary[] medians =
         [
-            .. new EconomicZoneService().GetBoundaries(shores).Where(boundary => boundary.Kind == ArcKind.Median),
+            .. CreateService().GetBoundaries(shores, SourceEnvelope).Where(boundary => boundary.Kind == ArcKind.Median),
         ];
 
         medians.Should().ContainSingle();
@@ -66,7 +69,7 @@ public class EconomicZoneServiceTests
             island,
             [(30.0, 10.0), (30.01, 10.0), (30.01, 10.01), (30.0, 10.01), (30.0, 10.0)]);
 
-        ZoneBoundary[] boundaries = [.. new EconomicZoneService().GetBoundaries([shore])];
+        ZoneBoundary[] boundaries = [.. CreateService().GetBoundaries([shore], SourceEnvelope)];
 
         boundaries.Should().ContainSingle().Which.Kind.Should().Be(ArcKind.Limit);
         Coordinate[] limit = [.. boundaries[0].Coordinates];
@@ -91,7 +94,7 @@ public class EconomicZoneServiceTests
             CreateShore(arcGraph, country, [(1.0, 1.0), (1.0, -1.0)]),
         ];
 
-        new EconomicZoneService().GetBoundaries(shores)
+        CreateService().GetBoundaries(shores, SourceEnvelope)
             .Should()
             .NotContain(boundary => boundary.Kind == ArcKind.Median)
             .And.OnlyContain(boundary => boundary.First == country);
@@ -100,17 +103,141 @@ public class EconomicZoneServiceTests
     [Test]
     public void GetBoundaries_ShouldThrowArgumentNullException_WhenTheShoresAreNull()
     {
-        Action action = () => new EconomicZoneService().GetBoundaries(null!);
+        Action action = () => CreateService().GetBoundaries(null!, SourceEnvelope);
 
         action.Should().Throw<ArgumentNullException>();
     }
 
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldEndTheMedianLinesAtTheNodesWhereTheBorderMeetsTheCoast(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // An oblong of land 100 units by 40 at the middle of the map, cut in two by a border down
+        // its middle, so that the two countries' coasts meet at its top and at its bottom. The
+        // median line between them leaves the land at those two nodes and nowhere else, and it ends
+        // at the very nodes of the land graph rather than at a copy of them.
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        Country west = new Country("West", CountryType.UnitaryState);
+        Country east = new Country("East", CountryType.UnitaryState);
+        Node top = arcGraph.AddNode(new Coordinate(3000.0, 1830.0));
+        Node bottom = arcGraph.AddNode(new Coordinate(3000.0, 1870.0));
+        Shore[] shores =
+        [
+            CreateCoast(arcGraph, west, top, bottom, [(2950.0, 1830.0), (2950.0, 1870.0)]),
+            CreateCoast(arcGraph, east, top, bottom, [(3050.0, 1830.0), (3050.0, 1870.0)]),
+        ];
+        EconomicZoneService service = CreateService();
+
+        ArcGraph water = service.AddArcs(arcGraph, shores, service.GetBoundaries(shores, SourceEnvelope), SourceEnvelope);
+
+        Arc[] medians = [.. water.Arcs.Where(arc => arc.Kind == ArcKind.Median)];
+        medians.Should().HaveCount(2);
+        medians.Should().ContainSingle(arc => (arc.StartNode == top) || (arc.EndNode == top));
+        medians.Should().ContainSingle(arc => (arc.StartNode == bottom) || (arc.EndNode == bottom));
+        water.Arcs.SelectMany(arc => arc.Coordinates.ToCoordinateArray())
+            .Should()
+            .NotContain(
+                coordinate => (coordinate.X > 2950.0) && (coordinate.X < 3050.0) && (coordinate.Y > 1830.0)
+                    && (coordinate.Y < 1870.0),
+                "nothing of a zone lies over land");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldCutTheLimitAtTheAntimeridian_WhenItRunsRoundIt(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // An islet just inside the eastern rim, whose limit runs round past it and back. Drawn on
+        // the map it would cross from one edge to the other; cut, it stops at either edge.
+        WinkelTripelProjectionService projectionService = new WinkelTripelProjectionService(new GeometryFactory());
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        Country island = new Country("Island", CountryType.UnitaryState);
+        Coordinate[] geographic =
+        [
+            new Coordinate(179.9, 0.0),
+            new Coordinate(179.91, 0.0),
+            new Coordinate(179.91, 0.01),
+            new Coordinate(179.9, 0.01),
+            new Coordinate(179.9, 0.0),
+        ];
+        Arc arc = arcGraph.AddArc(
+            ArcKind.Coast,
+            coordinateSequenceFactory.Create(
+                [
+                    .. geographic.Select(
+                        coordinate => projectionService.Unscale(projectionService.Project(coordinate), SourceEnvelope)),
+                ]));
+        Shore[] shores = [new Shore(island, arc, geographic, 0.0)];
+        EconomicZoneService service = new EconomicZoneService(projectionService);
+
+        ArcGraph water = service.AddArcs(arcGraph, shores, service.GetBoundaries(shores, SourceEnvelope), SourceEnvelope);
+
+        water.Arcs.Should().HaveCountGreaterThan(1, "the limit is cut where it crosses the antimeridian");
+        foreach (Arc limit in water.Arcs)
+        {
+            Coordinate[] coordinates = limit.GetFullCoordinates();
+            coordinates.Zip(coordinates.Skip(1))
+                .Should()
+                .OnlyContain(pair => Math.Abs(pair.First.X - pair.Second.X) < 100.0, "no segment runs across the map");
+        }
+    }
+
+    [Test]
+    public void AddArcs_ShouldThrowArgumentNullException_WhenTheGraphIsNull()
+    {
+        Action action = () => CreateService().AddArcs(null!, [], [], SourceEnvelope);
+
+        action.Should().Throw<ArgumentNullException>();
+    }
+
+    private static EconomicZoneService CreateService()
+    {
+        return new EconomicZoneService(new WinkelTripelProjectionService(new GeometryFactory()));
+    }
+
+    // A coast arc between two nodes, drawn in the source map's coordinates for the land graph and
+    // carried in longitude and latitude for the zones, as ConvertCommand hands it over.
+    private static Shore CreateCoast(
+        ArcGraph arcGraph,
+        Country owner,
+        Node start,
+        Node end,
+        (double X, double Y)[] interior)
+    {
+        WinkelTripelProjectionService projectionService = new WinkelTripelProjectionService(new GeometryFactory());
+        Arc arc = arcGraph.AddArc(
+            ArcKind.Coast,
+            start,
+            end,
+            arcGraph.CoordinateSequenceFactory.Create([.. interior.Select(point => new Coordinate(point.X, point.Y))]));
+
+        return new Shore(
+            owner,
+            arc,
+            [
+                .. arc.GetFullCoordinates()
+                    .Select(
+                        coordinate => projectionService.Unproject(projectionService.Rescale(coordinate, SourceEnvelope))),
+            ],
+            0.0);
+    }
+
+    // A shore given in longitude and latitude, drawn into the source map as ConvertCommand would
+    // find it there.
     private static Shore CreateShore(ArcGraph arcGraph, Country owner, (double X, double Y)[] points)
     {
+        WinkelTripelProjectionService projectionService = new WinkelTripelProjectionService(new GeometryFactory());
         Coordinate[] coordinates = [.. points.Select(point => new Coordinate(point.X, point.Y))];
-        Arc arc = arcGraph.AddArc(ArcKind.Coast, arcGraph.CoordinateSequenceFactory.Create(coordinates));
+        Arc arc = arcGraph.AddArc(
+            ArcKind.Coast,
+            arcGraph.CoordinateSequenceFactory.Create(
+                [
+                    .. coordinates.Select(
+                        coordinate => projectionService.Unscale(projectionService.Project(coordinate), SourceEnvelope)),
+                ]));
 
-        return new Shore(owner, arc, coordinates);
+        return new Shore(owner, arc, coordinates, 0.0);
     }
 
     private static double GetDistance(Coordinate one, Coordinate other)
