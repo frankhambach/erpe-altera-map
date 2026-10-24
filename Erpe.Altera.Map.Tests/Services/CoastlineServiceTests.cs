@@ -364,6 +364,71 @@ public class CoastlineServiceTests
             .OnlyContain(coordinate => coordinate.Y > 0.0);
     }
 
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepTheLake_WhenAGapAlongABorderRunsIntoIt(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // Two shapes that do not quite meet along the border at y = 45 leave a gap 0.05 wide,
+        // and it runs 20 units into the side of a lake. Judged whole the hole is the lake and the
+        // gap together, and the border along the gap crosses it 16.6 times over against the 6 a
+        // lake is allowed: it was a gap, and the lake went to the land. Divided at the neck where
+        // the gap meets the lake, the lake is judged on its own and kept, without the gap.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create([new Coordinate(15.0, 45.0), new Coordinate(41.0, 45.0)]));
+
+        new CoastlineService(geometryFactory).AddArcs([CreateLakeWithAnArm(geometryFactory)], arcGraph);
+
+        Arc lake = arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Lake).Subject;
+        geometryFactory.CreatePolygon(lake.GetFullCoordinates())
+            .Area.Should()
+            .BeApproximately(100.0, 0.01, "the gap is cut off at its mouth and the lake is the 10 by 10 square");
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepTheArmWithTheLake_WhenNoBorderRunsAlongIt(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The same shape with no border near it: a lake with a long narrow arm of its own, which
+        // is water and stays with the lake. A neck is only taken where a border lies at it.
+        new CoastlineService(geometryFactory).AddArcs([CreateLakeWithAnArm(geometryFactory)], arcGraph);
+
+        Arc lake = arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Lake).Subject;
+        geometryFactory.CreatePolygon(lake.GetFullCoordinates())
+            .Area.Should()
+            .BeApproximately(101.0, 0.01, "the arm is part of the lake");
+    }
+
+    // A 10 by 10 lake at 40, 40 with an arm 0.05 wide running 20 units west from its western
+    // shore along y = 45.
+    private static Polygon CreateLakeWithAnArm(GeometryFactory geometryFactory)
+    {
+        return geometryFactory.CreatePolygon(
+            CreateRing(geometryFactory, 0, 0, 100, 100),
+            [
+                geometryFactory.CreateLinearRing(
+                    [
+                        new Coordinate(40.0, 40.0),
+                        new Coordinate(50.0, 40.0),
+                        new Coordinate(50.0, 50.0),
+                        new Coordinate(40.0, 50.0),
+                        new Coordinate(40.0, 45.025),
+                        new Coordinate(20.0, 45.025),
+                        new Coordinate(20.0, 44.975),
+                        new Coordinate(40.0, 44.975),
+                        new Coordinate(40.0, 40.0),
+                    ]),
+            ]);
+    }
+
     // A 10 by 10 lake, fat enough for 3d to keep as water, whose shore runs half a unit west
     // from 45, 50 and comes back `width` units away from where it set out.
     private static Polygon CreateLakeWithANeedle(GeometryFactory geometryFactory, double width)

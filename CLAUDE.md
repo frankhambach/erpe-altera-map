@@ -26,14 +26,15 @@ Everything until 7b happens in **SVG coordinates**, on the fixed precision grid 
 | 1c | Leave out an element the author hid; `display="none"` says it is not part of the map | `SvgElementExtensions.IsDrawnLinework` |
 | 1d | Read `Border_Tracers` and `Substate_Tracers` into arcs on shared nodes, both layers into one graph | `TracerService.AddArcs` |
 | 1e | Build the drawn country polygons: snap, close each sub-path, unloop self-intersections, polygonize | `CorrectionService.Snap`, `TopologyService.Close` → `Unloop` → `Polygonize` |
+| 1f | Tie each group under `Substate_Shapes` to the country whose shape contains its substates, and make that country a federation of them. It keeps its own name — Ocarasta, not Grand Praire Confederacy — and its shape is never used again: a federation is its substates | `ConvertCommand.GetFederations` |
 | **2** | **Cut out what a tracer draws twice.** | `CorrectionService.Collapse` |
 | 2a | Cut a needle: a stretch a tracer draws out and back along itself, which no face can lie on one side of | `RemoveNeedles` |
 | 2b | Collapse a stretch that repeats *another* tracer onto the copy that is kept, leaving the ends loose for step 4 | `FindDuplicates`, `ApplyRemovals` |
 | **3** | **Build the coastline.** | `CoastlineService.AddArcs` |
-| 3a | Union the unitary and federated states' polygons into the landmass. A federal state is drawn twice over — as itself and as its parts — so including it would let the coast come from whichever drawing was further out | `UnaryUnionNG` |
+| 3a | Union the unitary states' and the substates' polygons into the landmass, never a federation's own shape. The two drawings of one coast disagree by a hair in thousands of places, and taking the coast from the federation while the faces went to the substates left islets no substate claimed | `UnaryUnionNG` |
 | 3b | Take each shell as one closed coast arc, whole; step 5 splits it where a tracer meets it | `AddArc(ArcKind.Coast)` |
 | 3c | Fill a slit: a gap between two shapes that reaches the sea is not a hole but a cut in the shell, and the ground beside it would otherwise be enclosed by nothing | `FillSlits` |
-| 3d | Tell a lake from a gap — by hydraulic radius, and by whether a border runs the hole's whole length — and keep the lake as its own kind of arc | `GetAreaToLengthRatio`, `GetTracerCrossing` |
+| 3d | Divide each hole at its necks where a border lies at them, then tell a lake from a gap piece by piece — by hydraulic radius, and by whether a border runs the piece's whole length — and keep the lake as its own kind of arc. A gap between two substates that runs into a lake is the same hole as the lake, and judged whole it lost three lakes | `SplitAtNecks`, `GetAreaToLengthRatio`, `GetTracerCrossing` |
 | 3e | Cut the needles out of the coast and lake rings, where two shapes disagree about the water's edge by a hair | `RemoveNeedles` |
 | 3f | Cut a tracer back to the lake shore, since a border drawn across water would shave a sliver off the lake | `ClipTracers` |
 | 3g | Cut a tracer off the sea shore where it was drawn along it, and drop what is left seaward | `ClipShoreRuns` |
@@ -73,7 +74,7 @@ Everything until 7b happens in **SVG coordinates**, on the fixed precision grid 
 | 8a | Count every segment of the output and check each inland one is used exactly twice, from opposite sides, with the same coordinates | `VerifySharing` |
 | 8b | Account for the segments used once — coast, lake shore, or the edge of a face left out — and report what is left | `VerifySharing` |
 
-Steps 6 and 7a run once per layer: the national layer first, with unclaimed faces absorbed, then the substate layer without. They cannot run together, because a substate shape lies inside its country's shape and passing both at once reports every substate face as belonging to two countries. From 7b on the two are carried together, and each output is written three times over — the national layer, the substate layer and the two combined. Steps 7e to 8 then repeat at tolerances of 0.001 and 0.01 for the coarse outputs.
+Step 6 runs once, over the countries the map is finally made of: the unitary states and the substates, with unclaimed faces absorbed into a neighbour of either kind. 7a then runs once per layer: the substates are assembled while the faces carry them, every substate's face is handed to its federation, and the national layer is assembled from that. From 7b on the two are carried together, and each output is written three times over — the national layer, the substate layer and the two combined, which is unitary states and substates and is a partition of the land like the other two. Steps 7e to 8 then repeat at tolerances of 0.001 and 0.01 for the coarse outputs.
 
 `--debug-svg` writes four files in the coordinates of the source map, framed on its own view box, through `IDiagnosticsService`: the arcs before and after face tracing, every face, and the faces left out. Both arc files are written because 5a mints new identifiers as it splits arcs at their crossings, so anything the later reports name by number is absent from the earlier file.
 
@@ -99,7 +100,7 @@ C:/Users/frank/.dotnet/dotnet.exe run --project Erpe.Altera.Map/Erpe.Altera.Map.
 
 A full run is about a hundred seconds. Write outputs to the scratchpad, not into the repo.
 
-**The test suite passes clean: 1031 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1031 passing, 0 failing").
+**The test suite passes clean: 1033 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1033 passing, 0 failing").
 
 ## Conventions that will fail the build if ignored
 
@@ -138,22 +139,24 @@ Four traps worth knowing:
 
 Measured on `Altera_Data_Generating_Map 20261022.svg`, the export of 22 October. Note the space in the name where the earlier one had an underscore.
 
-* **1225 countries** in the national layer and 1577 in the substate layer, every one of them with geometry.
-* **7007 faces** traced, covering 5,854,339.3 of the 5,855,095.4 square units the coastline encloses. 2 unclaimed faces, both absorbed into their neighbours.
+* **1225 countries** in the national layer, 365 substates in the substate layer and 1574 in the combined output, every one of them with geometry. 16 federations are made of their substates, four of them — Nunangats, Belgium, Ocarasta and Caribbea — not marked as federations in the country layer.
+* **6956 faces** traced, covering 5,854,359.1 of the 5,855,115.7 square units the coastline encloses. 461 lakes, after the holes were divided at 4564 necks into 8788 pieces. 2 unclaimed faces, both absorbed into their neighbours.
 * **No arc separates nothing**, and no arc end is left loose.
-* The sharing check, over 1,357,496 segments: 271,021 shared exactly from both sides, and **0 wound the same way, 0 used twice by one country, 0 used by three or more rings**. 3 segments (0.000%) are unaccounted for.
-* **Every ring survives every tolerance**: 6509 of 6509 in the national layer at 0.001 and at 0.01, the floor raised on 2 arcs and on 10 to keep it so.
+* The sharing check, over 1,357,342 segments: 271,029 shared exactly from both sides, and **0 wound the same way, 0 used twice by one country, 0 used by three or more rings**. 3 segments (0.000%) are unaccounted for. The combined output is a partition as well — 0 segments used three times and 0 wound the same way, checked by reading the file — where it used to carry Nunangats on top of its own substates.
+* **Every ring survives every tolerance**: 6455 of 6455 in the national layer at 0.001 and at 0.01, the floor raised on 2 arcs and on 10 to keep it so.
 * **No ring encloses nothing** and none is dropped on the way out. Namaquab-0's hole 1 was, until the unprojection stopped putting degrees on the grid, and Anian-23's shell was until it stopped clamping at longitude 180.
-* **0 clockwise shells and 0 counter-clockwise holes** — 6149 shells and 360 holes, all the right way round. Nothing reports this; it is checked by reading the written file.
+* **0 clockwise shells and 0 counter-clockwise holes** — 6095 shells and 360 holes, all the right way round. Nothing reports this; it is checked by reading the written file.
 * **Every longitude lies in [-180, 180]**, in all three resolutions. Nine shapes are drawn past the rim. Anian-23 lies wholly beyond it and is taken round whole; the far parts of Anian-21, -22 and -43 are cut at the rim and taken round, 4 faces in all; the overshoots of Chukcha's and Mammoth Island's two halves land on the other half and are left out, 4 faces and 133.6 square units; Antarctica's hairlines along both edges are cut in 5c. Nothing reports the range either. The southern edge comes out at -89.999998 rather than -90, which is Newton's method's answer at the pole now that nothing rounds it.
 
-The run finishes with **no errors**. Its 24 warnings are the per-case reports of what it corrected — 14 duplicated tracer stretches and 9 tracers cut back off the shore, each named with where it is — plus one that is the first open item below.
+The run finishes with **no errors**. Its 27 warnings are the per-case reports of what it corrected — 14 duplicated tracer stretches and 12 tracers cut back off the shore, each named with where it is — plus one that is the first open item below.
 
 Open:
 
-* **1 hole lands in the band the gap threshold was chosen to avoid**, between 0.10 and 0.19 on the area-to-length ratio, which was empty on the earlier export. Lakes and gaps are no longer cleanly separated on this one. `CoastlineService`'s constants say what that figure rests on; it wants watching rather than nudging.
+* **2 holes land in the band the gap threshold was chosen to avoid**, between 0.10 and 0.19 on the area-to-length ratio, which was empty on the earlier export. Lakes and gaps are no longer cleanly separated on this one. `CoastlineService`'s constants say what that figure rests on; it wants watching rather than nudging.
 * **2 faces are claimed by more than one country**, both too small to be reported individually.
 * **3 unaccounted segments**, 0.000% of the boundary, which is the output's six decimals showing rather than a border with one side to it.
+* **3 water faces of no area**, triangles 0.003 to 0.05 units round bounded only by lake shore. Water is never written, so they reach no file.
+* **One lake is drawn smaller by the substates** than by its country: 57.3 square units against 60.2, at about 1901, 1037 in the source map. That is the drawing and not the pipeline, which gives back every other lake the country shapes have.
 * **`Unproject` answers in radians near the centre of the map.** Within about 0.00006 degrees of longitude 0, latitude 0 its Newton step has no denominator, and the fallback returns the iterate unconverted and put on the grid. Nothing on this map lies there, and the run logs it as an error if anything does.
 * **A hidden group would still be read.** The visibility rule asks the element, not its ancestors, and hiding a whole layer is what Illustrator does.
 
