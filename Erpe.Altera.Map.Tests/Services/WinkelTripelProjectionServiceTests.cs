@@ -184,6 +184,27 @@ public class WinkelTripelProjectionServiceTests
         result.Y.Should().BeApproximately(latitude, 0.000001);
     }
 
+    // With the precision model Program installs, which is fixed at 0.0001: the grid is for the
+    // source map's units, and in degrees it is 11 m, coarser than the six decimals 7c writes. A
+    // point off that grid has to come back where it was to well within a millionth of a degree.
+    [TestCase(12.345678, 45.678912)]
+    [TestCase(-179.999987, -89.876543)]
+    [TestCase(0.123457, -0.000041)]
+    [TestCase(180.123456, 51.000049)]
+    public void Unproject_ShouldNotPutDegreesOnThePrecisionGrid_WhenThePrecisionModelIsFixed(
+        double longitude,
+        double latitude)
+    {
+        WinkelTripelProjectionService winkelTripelProjectionService =
+            new WinkelTripelProjectionService(new GeometryFactory(new PrecisionModel(10000.0)));
+
+        Coordinate result = winkelTripelProjectionService.Unproject(
+            winkelTripelProjectionService.Project(new Coordinate(longitude, latitude)));
+
+        result.X.Should().BeApproximately(longitude, 1e-9);
+        result.Y.Should().BeApproximately(latitude, 1e-9);
+    }
+
     [InlineAutoData(-(Math.PI + 2) / 2, 0, -180, 0)]
     [InlineAutoData((Math.PI + 2) / 2, 0, 180, 0)]
     [InlineAutoData(-1.0000000000, -1.5707963268, -180, -90)]

@@ -151,7 +151,7 @@ public sealed class WinkelTripelProjectionService : IProjectionService
                     phi -= 2.0 * (phi + (Math.PI / 2.0));
                 }
 
-                return this.CreateCoordinate(lambda, phi);
+                return CreateCoordinate(lambda, phi);
             }
 
             derivativeXByPhi = ((sinHalfLambda * cosHalfLambda * sinPhi * cosPhi)
@@ -184,7 +184,7 @@ public sealed class WinkelTripelProjectionService : IProjectionService
             "Could not accurately determine coordinates for projected point {Point} after {IterationCount} iterations.",
             coordinate,
             MaximumIterationCount);
-        return this.CreateCoordinate(lambda, phi);
+        return CreateCoordinate(lambda, phi);
     }
 
     // A longitude past 180 is kept rather than clamped onto the antimeridian. Clamping flattened
@@ -194,13 +194,22 @@ public sealed class WinkelTripelProjectionService : IProjectionService
     // takes the far part round to the other side, and it needs the real longitude to do that.
     // Newton's method converges out there as it does inside: nothing on the map comes back with
     // the warning below.
-    private Coordinate CreateCoordinate(double lambda, double phi)
+    //
+    // Nor is it put on the precision grid. The grid is 0.0001 in whatever units it is handed: in
+    // the source map's that is the 0.65 m the graph is noded on, and in degrees it is 11 m, some
+    // seventeen times coarser - the reason 7c writes six decimals and not four. Rounding here
+    // made the six decimals four, every coordinate in the file landing on the coarser grid, and
+    // is what is left of a pipeline that once unprojected first and worked in degrees after. Now
+    // the unprojection is 7b and nothing after it nodes anything, so there is nothing for a grid
+    // in degrees to do. Measured on the 22 October export, against rounding here: every check
+    // the run makes comes out the same or better at every tolerance, 271,021 segments shared
+    // rather than 271,017 and the 3 unaccounted unchanged, and Namaquab-0's lake, a line on the
+    // grid, encloses something again and is written.
+    private static Coordinate CreateCoordinate(double lambda, double phi)
     {
         double x = (lambda / Math.PI) * 180.0;
         double y = (phi / Math.PI) * 180.0;
 
-        return new Coordinate(
-            this.geometryFactory.PrecisionModel.MakePrecise(x),
-            this.geometryFactory.PrecisionModel.MakePrecise(y));
+        return new Coordinate(x, y);
     }
 }

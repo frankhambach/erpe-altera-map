@@ -146,8 +146,9 @@ public class VisvalingamSimplificationServiceTests
     {
         // A ring that will never say yes. The counts climb to the lines' own lengths, at which
         // nothing is taken from them at all, and then the lines drop out of the asking and this
-        // ends rather than climbing for ever. Namaquab's lake of no area is one of these and is
-        // kept out of the asking from the start, but the loop has to be safe without that.
+        // ends rather than climbing for ever. A ring of no area to begin with, as Namaquab's lake
+        // was while degrees were unprojected onto a grid, is kept out of the asking from the start,
+        // but the loop has to be safe without that.
         (Coordinate[] Line, int MinimumCount)[] lines = [(Apex(0, 0, 1, 0.1, 2, 0), 2), (Apex(2, 0, 1, -0.1, 0, 0), 2)];
 
         (IReadOnlySet<(double X, double Y)> removed, int raised, int rounds) =
