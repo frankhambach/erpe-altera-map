@@ -100,7 +100,7 @@ C:/Users/frank/.dotnet/dotnet.exe run --project Erpe.Altera.Map/Erpe.Altera.Map.
 
 A full run is about a hundred seconds. Write outputs to the scratchpad, not into the repo.
 
-**The test suite passes clean: 1033 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1033 passing, 0 failing").
+**The test suite passes clean: 1049 tests, 0 failures.** It carried 44 failures for a long time — 43 `Unproject*` in `WinkelTripelProjectionServiceTests` and 1 `GetCoordinates*` in `SvgApproximationServiceTests` — but every one of them was a wrong expectation rather than a defect in the pipeline, and correcting them took the total from 1010 to 1008 by removing two tests that asserted nothing. **0 failing is the baseline now**; a failure is a real regression and none is expected, so do not wave one through as pre-existing, and say the total when reporting ("1049 passing, 0 failing").
 
 ## Conventions that will fail the build if ignored
 

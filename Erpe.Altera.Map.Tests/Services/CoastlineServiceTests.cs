@@ -407,9 +407,80 @@ public class CoastlineServiceTests
             .BeApproximately(101.0, 0.01, "the arm is part of the lake");
     }
 
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldCloseTheNeckWhereTheReturnComesNearest_WhenSeveralVerticesComeBackWithinTheWidth(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // The arm's far wall has a vertex 0.2 short of the mouth as well as the one at it. The
+        // first is the first to come back within half a unit, but closing there would leave a
+        // corner of the arm on the lake: the neck is taken at the second, straight across.
+        arcGraph.AddArc(
+            ArcKind.Border,
+            coordinateSequenceFactory.Create([new Coordinate(15.0, 45.0), new Coordinate(41.0, 45.0)]));
+
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreateLakeWithAnArm(geometryFactory, new Coordinate(39.8, 44.975))],
+            arcGraph);
+
+        // Closed at the first, the lake would keep that vertex and 0.005 square units of the arm.
+        Arc lake = arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Lake).Subject;
+        lake.GetFullCoordinates()
+            .Should()
+            .NotContain(
+                coordinate => coordinate.Equals2D(new Coordinate(39.8, 44.975)),
+                "the gap is cut off straight across its mouth");
+        geometryFactory.CreatePolygon(lake.GetFullCoordinates()).Area.Should().BeApproximately(100.0, 1E-9);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldKeepTheHoleAsALake_WhenItsRatioLiesBetweenTheGapAndLakeBands(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // 0.36 by 40 measures 0.178 on the area to length ratio: above the 0.15 a gap is held
+        // to, and inside the band between 0.10 and 0.19 that is reported as no longer cleanly
+        // separating the two. It is kept, and the report is a warning rather than a decision.
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreatePolygonWithHole(geometryFactory, 30.0, 30.0, 0.36, 40.0)],
+            arcGraph);
+
+        arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Lake);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void AddArcs_ShouldLeaveTheTracersWhole_WhenTheyPassTheLakeBy(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+
+        // One border nowhere near the lake, and one that goes round its corner: its envelope
+        // takes in the lake's, but the line itself keeps five units off the shore.
+        Coordinate[] far = [new Coordinate(10.0, 10.0), new Coordinate(10.0, 30.0)];
+        Coordinate[] round = [new Coordinate(35.0, 55.0), new Coordinate(55.0, 55.0), new Coordinate(55.0, 35.0)];
+        arcGraph.AddArc(ArcKind.Border, coordinateSequenceFactory.Create(far));
+        arcGraph.AddArc(ArcKind.Substate, coordinateSequenceFactory.Create(round));
+
+        new CoastlineService(geometryFactory).AddArcs(
+            [CreatePolygonWithHole(geometryFactory, 40.0, 40.0, 10.0, 10.0)],
+            arcGraph);
+
+        arcGraph.Arcs.Should().ContainSingle(arc => arc.Kind == ArcKind.Lake);
+        arcGraph.Arcs.Single(arc => arc.Kind == ArcKind.Border).GetFullCoordinates().Should().Equal(far);
+        arcGraph.Arcs.Single(arc => arc.Kind == ArcKind.Substate).GetFullCoordinates().Should().Equal(round);
+    }
+
     // A 10 by 10 lake at 40, 40 with an arm 0.05 wide running 20 units west from its western
-    // shore along y = 45.
-    private static Polygon CreateLakeWithAnArm(GeometryFactory geometryFactory)
+    // shore along y = 45, and any further vertices given along its far wall before the mouth.
+    private static Polygon CreateLakeWithAnArm(GeometryFactory geometryFactory, params Coordinate[] farWall)
     {
         return geometryFactory.CreatePolygon(
             CreateRing(geometryFactory, 0, 0, 100, 100),
@@ -423,6 +494,7 @@ public class CoastlineServiceTests
                         new Coordinate(40.0, 45.025),
                         new Coordinate(20.0, 45.025),
                         new Coordinate(20.0, 44.975),
+                        .. farWall,
                         new Coordinate(40.0, 44.975),
                         new Coordinate(40.0, 40.0),
                     ]),

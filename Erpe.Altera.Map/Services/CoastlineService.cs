@@ -451,28 +451,6 @@ public sealed class CoastlineService : ICoastlineService
         return [.. coordinates];
     }
 
-    // A ring that leaves a vertex, goes somewhere and comes back to within a hair of it without
-    // enclosing anything on the way has drawn one line twice rather than gone round something.
-    // Nothing is on the far side of such a run, so whatever is assembled from the ring walks its
-    // own line out and back - which is the segment the sharing check reports as used twice by one
-    // country, Dematia's 0.47 units of lake shore at 3526.82, 2176.64.
-    //
-    // It is the same defect 3c fills on a shell, arriving where 3c cannot see it. The
-    // fill asks for a unit of travel before it will take a run, because under that a shell's own
-    // jitter qualifies - 51,541 runs of two drawn segments folding onto each other - and
-    // Dematia's needle travels 0.937. What makes a length minimum unnecessary here is that the
-    // run has to come back to within MaximumNeedleReturn rather than within half a unit: jitter
-    // does not return to where it set out from, it wanders on.
-    //
-    // The run is replaced by the vertex it set out from, so the ring loses the needle and keeps
-    // everything either side of it. This also runs on the lake rings, which is where all five of
-    // the needles on this map are, and needs no winding test to do it: a run that encloses
-    // nothing encloses nothing on either side, so unlike a slit it does not matter which side
-    // the water is on.
-    //
-    // Known limitation, shared with 3c: a needle straddling the ring's own first vertex is
-    // cut in part rather than whole, because the closing vertex is never removed and the scan
-    // does not wrap.
     // The first neck along an open ring, as the index on one side of it and how many vertices on
     // the other lies, or (-1, -1). Taken round the ring, past its end and on from its start: a gap
     // straddling the vertex the ring happens to start at is a gap like any other, and the one on
@@ -565,6 +543,28 @@ public sealed class CoastlineService : ICoastlineService
         return false;
     }
 
+    // A ring that leaves a vertex, goes somewhere and comes back to within a hair of it without
+    // enclosing anything on the way has drawn one line twice rather than gone round something.
+    // Nothing is on the far side of such a run, so whatever is assembled from the ring walks its
+    // own line out and back - which is the segment the sharing check reports as used twice by one
+    // country, Dematia's 0.47 units of lake shore at 3526.82, 2176.64.
+    //
+    // It is the same defect 3c fills on a shell, arriving where 3c cannot see it. The
+    // fill asks for a unit of travel before it will take a run, because under that a shell's own
+    // jitter qualifies - 51,541 runs of two drawn segments folding onto each other - and
+    // Dematia's needle travels 0.937. What makes a length minimum unnecessary here is that the
+    // run has to come back to within MaximumNeedleReturn rather than within half a unit: jitter
+    // does not return to where it set out from, it wanders on.
+    //
+    // The run is replaced by the vertex it set out from, so the ring loses the needle and keeps
+    // everything either side of it. This also runs on the lake rings, which is where all five of
+    // the needles on this map are, and needs no winding test to do it: a run that encloses
+    // nothing encloses nothing on either side, so unlike a slit it does not matter which side
+    // the water is on.
+    //
+    // Known limitation, shared with 3c: a needle straddling the ring's own first vertex is
+    // cut in part rather than whole, because the closing vertex is never removed and the scan
+    // does not wrap.
     private static Coordinate[] RemoveNeedles(Coordinate[] ring, List<(double Radius, double Length)> needles)
     {
         List<Coordinate> coordinates = [.. ring];
@@ -946,11 +946,6 @@ public sealed class CoastlineService : ICoastlineService
         return land.Query(point.EnvelopeInternal).Any(shell => shell.Contains(point));
     }
 
-    // How far the tracers run through a hole, against the hole's own half-perimeter. For a
-    // hole thin enough to be a gap that half-perimeter is its length, so the measure says what
-    // fraction of the gap the border follows; dividing instead by the hydraulic radius, which
-    // is the same thing scaled, keeps the shape of the hole in the answer, and that is what
-    // separates a border following a sliver from one crossing a pool.
     // Whether a border or substate tracer comes within MaximumSlitWidth of the line between two
     // points: as near as a gap's walls come to each other, which is as near as the border it lies
     // along has to come to them.
@@ -963,6 +958,11 @@ public sealed class CoastlineService : ICoastlineService
         return tracers.Query(envelope).Any(tracer => tracer.IsWithinDistance(line, MaximumSlitWidth));
     }
 
+    // How far the tracers run through a hole, against the hole's own half-perimeter. For a
+    // hole thin enough to be a gap that half-perimeter is its length, so the measure says what
+    // fraction of the gap the border follows; dividing instead by the hydraulic radius, which
+    // is the same thing scaled, keeps the shape of the hole in the answer, and that is what
+    // separates a border following a sliver from one crossing a pool.
     private double GetTracerCrossing(LinearRing hole, STRtree<LineString> tracers, double ratio)
     {
         if (ratio < DegenerateLength)
