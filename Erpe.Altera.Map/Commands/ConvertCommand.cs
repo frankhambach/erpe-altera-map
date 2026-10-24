@@ -141,6 +141,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly IEconomicZoneService economicZoneService;
 
+    private readonly IZoneAssemblyService zoneAssemblyService;
+
     private readonly IFaceAssignmentService faceAssignmentService;
 
     private readonly GeometryFactory geometryFactory;
@@ -176,6 +178,7 @@ internal sealed class ConvertCommand : Command
         IVerificationService verificationService,
         IRimService rimService,
         IEconomicZoneService economicZoneService,
+        IZoneAssemblyService zoneAssemblyService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
     {
@@ -193,6 +196,7 @@ internal sealed class ConvertCommand : Command
         this.verificationService = verificationService;
         this.rimService = rimService;
         this.economicZoneService = economicZoneService;
+        this.zoneAssemblyService = zoneAssemblyService;
         this.geometryFactory = geometryFactory;
 
         Option<FileInfo> inOption = new("--in", "The SVG file to read country shapes from.");
@@ -818,31 +822,41 @@ internal sealed class ConvertCommand : Command
     // and is no shore of anybody's; an arc of a face taken round the rim is unprojected with the
     // face's offset, so that a zone is measured from where the land is and not from where it was
     // drawn.
+    //
+    // An arc with land on both sides is no shore, whatever its kind: two coast arcs on this map, 0.8
+    // units between them, have a country's face on either side, and taken for shores they claimed
+    // a land face for the sea.
     private IEnumerable<Shore> GetShores(ArcGraph arcGraph, Envelope sourceEnvelope)
     {
-        Dictionary<Arc, Face> behind = [];
+        Dictionary<Arc, (Face Face, bool IsReversed)> behind = [];
+        HashSet<Arc> inland = [];
         foreach (Face face in arcGraph.Faces.Where(face => face.Owner != null))
         {
             foreach (DirectedArc directed in face.Holes.Prepend(face.Shell)
                          .SelectMany(ring => ring)
                          .Where(directed => directed.Arc.Kind is ArcKind.Coast or ArcKind.Lake))
             {
-                behind.TryAdd(directed.Arc, face);
+                if (!behind.TryAdd(directed.Arc, (face, directed.IsReversed)))
+                {
+                    inland.Add(directed.Arc);
+                }
             }
         }
 
-        return behind.Select(
+        return behind.Where(pair => !inland.Contains(pair.Key)).Select(
             pair => new Shore(
-                pair.Value.Owner!,
+                pair.Value.Face.Owner!,
                 pair.Key,
                 [
                     .. pair.Key.GetFullCoordinates()
                         .Select(
                             coordinate => this.projectionService.Unproject(
                                 this.projectionService.Rescale(coordinate, sourceEnvelope)))
-                        .Select(coordinate => new Coordinate(coordinate.X + pair.Value.LongitudeOffset, coordinate.Y)),
+                        .Select(
+                            coordinate => new Coordinate(coordinate.X + pair.Value.Face.LongitudeOffset, coordinate.Y)),
                 ],
-                pair.Value.LongitudeOffset));
+                pair.Value.Face.LongitudeOffset,
+                pair.Value.IsReversed));
     }
 
     // The zone boundaries back in the source map's coordinates, for the debug file and nothing
@@ -1046,23 +1060,30 @@ internal sealed class ConvertCommand : Command
 
         Shore[] shores = [.. this.GetShores(arcGraph, sourceEnvelope)];
         IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(shores, sourceEnvelope);
-        ArcGraph water = this.economicZoneService.AddArcs(arcGraph, shores, zones, sourceEnvelope);
+        ZoneGraph water = this.economicZoneService.AddArcs(arcGraph, shores, zones, sourceEnvelope);
+
+        // Not written yet: the zones are assembled in the source map's coordinates and the debug files
+        // below are all there is of them so far.
+        _ = this.zoneAssemblyService.Assemble(
+            water,
+            arcGraph,
+            shores,
+            sourceEnvelope);
         if (debugSvg)
         {
             // Before cutting, the lines as they are found on the sphere, over land as well as
-            // water; after, the arcs of the water graph with the shores they meet. The two graphs
-            // mint from one set of identifiers, so the second file can carry both.
+            // water; after, the sea graph, with the shores and the rim it shares with the land graph,
+            // and the faces traced from it. The two graphs mint from one set of identifiers, so
+            // nothing in these files can be mistaken for an arc of the land.
             await this.diagnosticsService.WriteArcsAsync(
                     this.GetZoneArcs(zones, sourceEnvelope),
                     rim,
                     view,
                     GetDebugFile(outFile, "-zones"))
                 .ConfigureAwait(false);
-            await this.diagnosticsService.WriteArcsAsync(
-                    water.Arcs.Concat(arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake)),
-                    rim,
-                    view,
-                    GetDebugFile(outFile, "-water"))
+            await this.diagnosticsService.WriteArcsAsync(water.Graph.Arcs, rim, view, GetDebugFile(outFile, "-water"))
+                .ConfigureAwait(false);
+            await this.diagnosticsService.WriteFacesAsync(water.Graph.Faces, view, GetDebugFile(outFile, "-sea"))
                 .ConfigureAwait(false);
         }
 

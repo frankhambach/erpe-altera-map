@@ -15,6 +15,7 @@ using Erpe.Altera.Map.Models;
 using NetTopologySuite.Algorithm;
 using NetTopologySuite.Algorithm.Distance;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Prepared;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.Polygonize;
 using NetTopologySuite.Simplify;
@@ -261,6 +262,26 @@ public sealed class TopologyService : ITopologyService
         }
 
         return [.. sets.Select(faces => DissolveOneSet(faces, outgoing, positions))];
+    }
+
+    public int TraceFaces(ArcGraph arcGraph)
+    {
+        ArgumentNullException.ThrowIfNull(arcGraph);
+
+        List<(DirectedArc[] Ring, double SignedArea)> rings = TraceRings(arcGraph);
+        int traced = rings.Sum(ring => ring.Ring.Length);
+        if (traced != (arcGraph.Arcs.Count * 2))
+        {
+            Log.Warning(
+                "Traced {Traced} half-edges into rings but the graph has {Expected}; the faces do not tile.",
+                traced,
+                arcGraph.Arcs.Count * 2);
+        }
+
+        return this.AddFaces(
+            arcGraph,
+            [.. rings.Where(ring => ring.SignedArea > 0.0)],
+            [.. rings.Where(ring => ring.SignedArea <= 0.0)]);
     }
 
     public LinearRing Close(CoordinateSequence coordinateSequence)
@@ -1327,6 +1348,11 @@ public sealed class TopologyService : ITopologyService
         }
 
         List<DirectedArc[]>[] holes = [.. shells.Select(_ => new List<DirectedArc[]>())];
+
+        // Prepared, and only when first asked, because the faces of the sea are what this is slow
+        // on: a stretch of high seas is a polygon of hundreds of thousands of points with thousands
+        // of islands to place, and Contains walks every point each time. The answers are the same.
+        IPreparedGeometry?[] prepared = new IPreparedGeometry?[shells.Length];
         int unenclosed = 0;
         foreach ((DirectedArc[] ring, double _) in outlines)
         {
@@ -1340,7 +1366,8 @@ public sealed class TopologyService : ITopologyService
             int best = -1;
             foreach (int i in index.Query(new Envelope(point)))
             {
-                if (polygons[i].Contains(test) && ((best < 0) || (shells[i].SignedArea < shells[best].SignedArea)))
+                prepared[i] ??= PreparedGeometryFactory.Prepare(polygons[i]);
+                if (prepared[i]!.Contains(test) && ((best < 0) || (shells[i].SignedArea < shells[best].SignedArea)))
                 {
                     best = i;
                 }

@@ -13,9 +13,20 @@ using NetTopologySuite.Geometries;
 // zones unproject along the arc themselves. Every arc has one owner, because an arc ends wherever
 // a border meets it, and that is what makes the country of a sample a property of the arc it was
 // taken from.
-public sealed class Shore(Country owner, Arc arc, IReadOnlyList<Coordinate> coordinates, double longitudeOffset)
+//
+// IsLandReversed is which way round the land face walks the arc. A face lies to the left of the
+// arcs it is walked from, so the land is on the left of the arc walked that way and the water on
+// the left of it walked the other.
+public sealed class Shore(
+    Country owner,
+    Arc arc,
+    IReadOnlyList<Coordinate> coordinates,
+    double longitudeOffset,
+    bool isLandReversed)
 {
     public Arc Arc { get; } = arc;
+
+    public bool IsLandReversed { get; } = isLandReversed;
 
     public IReadOnlyList<Coordinate> Coordinates { get; } = coordinates;
 

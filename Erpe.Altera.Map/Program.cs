@@ -65,6 +65,7 @@ internal static class Program
             services.AddTransient<ISimplificationService, VisvalingamSimplificationService>();
             services.AddTransient<IRimService, RimService>();
             services.AddTransient<IEconomicZoneService, EconomicZoneService>();
+            services.AddTransient<IZoneAssemblyService, ZoneAssemblyService>();
             services.AddTransient<Command, ConvertCommand>();
 
             ServiceProvider serviceProvider = services.BuildServiceProvider();

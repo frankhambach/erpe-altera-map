@@ -138,6 +138,14 @@ public sealed class EconomicZoneService : IEconomicZoneService
     // a median close to the shore.
     private const double AnchorTolerance = 0.05;
 
+    // How far a median line that reaches the shore beyond AnchorTolerance may still be joined to the
+    // node of its two countries, in units of the source map, provided the straight way from its last
+    // point over water to the node touches no shore. At Namiba and Natalia the two coasts leave their
+    // node along one line for 330 m before they part, and the median comes up the water between them
+    // to where they part, 0.09 units short of the node; left loose there it divided nothing, and
+    // Natalia was given Namiba's whole zone with its own.
+    private const double ReachTolerance = 0.25;
+
     // How many of the median lines that reach the shore away from any node of their two countries,
     // and of the crossings left between arcs, are named in the log.
     private const int MaximumReported = 20;
@@ -257,6 +265,14 @@ public sealed class EconomicZoneService : IEconomicZoneService
         Log.Information(
             "{Thinned} vertices of the zone boundaries left out for lying on top of the one before them.",
             diagram.Thinned);
+        if (diagram.Inconsistent > 0)
+        {
+            Log.Warning(
+                "{Inconsistent} pieces of the zone boundaries with a length to them put the countries the other way "
+                + "round from the rest of the boundary they were chained into.",
+                diagram.Inconsistent);
+        }
+
         if ((diagram.Unpaired > 0) || (diagram.Wide > 0))
         {
             Log.Warning(
@@ -280,7 +296,7 @@ public sealed class EconomicZoneService : IEconomicZoneService
     //
     // A boundary is cut where it crosses the antimeridian, at exactly 180 degrees either way, so
     // that the two pieces end on the rim at either edge of the map and nothing runs across it.
-    public ArcGraph AddArcs(
+    public ZoneGraph AddArcs(
         ArcGraph arcGraph,
         IEnumerable<Shore> shores,
         IEnumerable<ZoneBoundary> boundaries,
@@ -322,13 +338,20 @@ public sealed class EconomicZoneService : IEconomicZoneService
         Log.Information(
             "{Anchored} median line ends fixed to the node at which their countries' shores meet, the furthest "
             + "{Furthest:G3} units from where the line crosses the shore; {Wavering} runs out from a node and back to it "
-            + "left out, and {Skipped} points passed over that the node could not reach without crossing the shore.",
+            + "left out, and {Skipped} points passed over that the node could not reach without crossing the shore; "
+            + "{Reached} more ends joined straight to their node over water from further away.",
             cut.Anchored,
             cut.Furthest,
             cut.Wavering,
-            cut.Skipped);
+            cut.Skipped,
+            cut.Reached);
 
-        (int crossings, IReadOnlyList<string> where) = CountCrossings(water.Arcs, arcGraph.Arcs);
+        // None is expected, since a median line, a limit and a shore never cross and every meeting
+        // of a median line with the shore has been made a node.
+        (int crossings, IReadOnlyList<string> where) = ArcCrossings.Count(
+            water.Arcs,
+            arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake),
+            MaximumReported);
         (int onRim, int elsewhere) = CountDangling(water, antimeridian);
         Log.Information(
             "{Crossings} crossings left between the zone arcs and the shore or each other; {OnRim} zone arc ends on "
@@ -352,7 +375,10 @@ public sealed class EconomicZoneService : IEconomicZoneService
                 string.Join("; ", cut.Loose.Take(MaximumReported)));
         }
 
-        return water;
+        return new ZoneGraph(
+            water,
+            cut.Boundaries,
+            [.. water.Nodes.Where(node => antimeridian.Contains(node.Coordinate))]);
     }
 
     // The triangulation is planar Delaunay on
@@ -508,76 +534,6 @@ public sealed class EconomicZoneService : IEconomicZoneService
         SphereVector east = axis.Cross(point).Normalize();
 
         return (east, point.Cross(east));
-    }
-
-    // Every point at which two segments of the zone arcs, or one of them and a segment of the shore,
-    // meet anywhere but at an end they share. None is expected, since a median line, a limit and
-    // a shore never cross and every meeting of a median line with the shore has been made a node.
-    // This is the measurement that says whether the faces of the sea can be traced without noding
-    // anything first. A few are named.
-    private static (int Count, IReadOnlyList<string> Where) CountCrossings(
-        IEnumerable<Arc> zones,
-        IEnumerable<Arc> land)
-    {
-        STRtree<(Arc Arc, int Index, Coordinate Start, Coordinate End)> segments =
-            new STRtree<(Arc Arc, int Index, Coordinate Start, Coordinate End)>();
-        Arc[] zoneArcs = [.. zones];
-        foreach (Arc arc in zoneArcs.Concat(land.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake)))
-        {
-            Coordinate[] coordinates = arc.GetFullCoordinates();
-            for (int i = 0; i < (coordinates.Length - 1); ++i)
-            {
-                segments.Insert(
-                    new Envelope(coordinates[i], coordinates[i + 1]),
-                    (arc, i, coordinates[i], coordinates[i + 1]));
-            }
-        }
-
-        LineIntersector intersector = new RobustLineIntersector();
-        HashSet<int> zoneIds = [.. zoneArcs.Select(arc => arc.Id)];
-        List<string> where = [];
-        int count = 0;
-        foreach (Arc arc in zoneArcs)
-        {
-            Coordinate[] coordinates = arc.GetFullCoordinates();
-            for (int i = 0; i < (coordinates.Length - 1); ++i)
-            {
-                Coordinate start = coordinates[i];
-                Coordinate end = coordinates[i + 1];
-                foreach ((Arc otherArc, int otherIndex, Coordinate otherStart, Coordinate otherEnd) in segments.Query(
-                             new Envelope(start, end)))
-                {
-                    // Each pair of zone segments once, and never a segment against itself. A segment of
-                    // no length crosses nothing: the coast carries a few, two equal points in a row at
-                    // the end of an arc, and the intersector took each for an overlap.
-                    bool isSeen = zoneIds.Contains(otherArc.Id) && ((otherArc.Id, otherIndex).CompareTo((arc.Id, i)) <= 0);
-                    if (isSeen || otherStart.Equals2D(otherEnd) || start.Equals2D(end))
-                    {
-                        continue;
-                    }
-
-                    intersector.ComputeIntersection(start, end, otherStart, otherEnd);
-                    if (!intersector.HasIntersection
-                        || ((intersector.IntersectionNum == 1)
-                            && IsSharedEnd(start, end, otherStart, otherEnd)))
-                    {
-                        continue;
-                    }
-
-                    ++count;
-                    if (where.Count < MaximumReported)
-                    {
-                        Coordinate point = intersector.GetIntersection(0);
-                        where.Add(
-                            string.Create(
-                                CultureInfo.InvariantCulture,
-                                $"{arc.Kind} {arc.Id} and {otherArc.Kind} {otherArc.Id} at {point.X:F4}, {point.Y:F4}"));
-                    }
-                }
-            }
-        }
-
-        return (count, where);
     }
 
     // The ends of zone arcs that meet no other arc, those on the antimeridian apart, which will meet
@@ -885,15 +841,6 @@ public sealed class EconomicZoneService : IEconomicZoneService
         return meetings;
     }
 
-    // Whether two segments that meet at a single point share an end, which is then the point: two
-    // straight segments meet once at most, and an end of both is a point of both. Asked of the
-    // ends rather than of the point the intersector computes, which for a segment of 0.0001 units
-    // ending at a node came out a rounding away from the node itself.
-    private static bool IsSharedEnd(Coordinate start, Coordinate end, Coordinate otherStart, Coordinate otherEnd)
-    {
-        return start.Equals2D(otherStart) || start.Equals2D(otherEnd) || end.Equals2D(otherStart) || end.Equals2D(otherEnd);
-    }
-
     // A boundary in pieces that each stay on one side of the antimeridian. Where it crosses, the
     // crossing is found on the great circle between the two points either side, and each piece
     // ends there at exactly 180 degrees, east on the one and west on the other.
@@ -973,6 +920,8 @@ public sealed class EconomicZoneService : IEconomicZoneService
 
         private long nextKey = -1;
 
+        public int Inconsistent { get; private set; }
+
         public int Thinned { get; private set; }
 
         public int Unpaired { get; private set; }
@@ -1038,14 +987,22 @@ public sealed class EconomicZoneService : IEconomicZoneService
                 long end = this.GetEnd(to, extent, middle, along, one, other);
                 if (labels[one] != labels[other])
                 {
+                    // Which country lies to the left of the piece as it runs, seen from outside the
+                    // sphere: the one whose sample is on the side the cross product of its ends points
+                    // to. The faces of the sea are given their owners by it.
+                    SphereVector startPoint = this.GetPoint(start);
+                    SphereVector endPoint = this.GetPoint(end);
+                    bool isOneLeft = startPoint.Cross(endPoint).Dot(a) > 0.0;
                     this.Add(
                         new Piece(
                             ArcKind.Median,
                             Math.Min(labels[one], labels[other]),
                             Math.Max(labels[one], labels[other]),
+                            isOneLeft ? labels[one] : labels[other],
+                            isOneLeft ? labels[other] : labels[one],
                             start,
                             end,
-                            [this.GetPoint(start), this.GetPoint(end)]));
+                            [startPoint, endPoint]));
                 }
             }
         }
@@ -1102,7 +1059,10 @@ public sealed class EconomicZoneService : IEconomicZoneService
                     }
 
                     line.Add(end.Point);
-                    this.Add(new Piece(ArcKind.Limit, labels[sample], -1, start.Key, end.Key, line));
+
+                    // Round the sample by rising azimuth, which is anticlockwise seen from outside, so
+                    // the zone is on the left and the high seas on the right.
+                    this.Add(new Piece(ArcKind.Limit, labels[sample], -1, labels[sample], -1, start.Key, end.Key, line));
                 }
             }
         }
@@ -1123,26 +1083,34 @@ public sealed class EconomicZoneService : IEconomicZoneService
 
                 visited[index] = true;
                 Piece piece = this.pieces[index];
-                List<SphereVector> line = [.. piece.Points];
-                foreach (SphereVector[] after in this.Walk(index, piece.End, visited))
-                {
-                    line.AddRange(after.Skip(1));
-                }
 
-                List<SphereVector[]> before = this.Walk(index, piece.Start, visited);
+                // Every piece of the chain, turned to run the way the chain does: the ones walked
+                // backwards from its start in reverse order and turned round once more.
+                List<(int Piece, bool IsReversed)> before = this.Walk(index, piece.Start, visited);
                 before.Reverse();
-                List<SphereVector> prefix = [];
-                foreach (SphereVector[] stretch in before)
+                List<(int Piece, bool IsReversed)> chain =
+                [
+                    .. before.Select(link => (link.Piece, !link.IsReversed)),
+                    (index, false),
+                    .. this.Walk(index, piece.End, visited),
+                ];
+
+                List<SphereVector> line = [];
+                foreach ((int link, bool isReversed) in chain)
                 {
-                    prefix.AddRange(stretch.AsEnumerable().Reverse().SkipLast(1));
+                    IEnumerable<SphereVector> stretch = this.pieces[link].Points;
+                    line.AddRange((isReversed ? stretch.Reverse() : stretch).Skip(line.Count == 0 ? 0 : 1));
                 }
 
+                (int left, int right) = this.GetSides(chain);
                 boundaries.Add(
                     new ZoneBoundary(
                         piece.Kind,
                         owners[piece.First],
                         piece.Second < 0 ? null : owners[piece.Second],
-                        [.. this.Thin([.. prefix.Concat(line)]).Select(point => point.ToGeographic())]));
+                        owners[left],
+                        right < 0 ? null : owners[right],
+                        [.. this.Thin(line).Select(point => point.ToGeographic())]));
             }
 
             return boundaries;
@@ -1152,6 +1120,17 @@ public sealed class EconomicZoneService : IEconomicZoneService
         {
             return this.incident.Values.Count(
                 at => (at.Count >= 3) && at.TrueForAll(index => this.pieces[index].Kind == ArcKind.Median));
+        }
+
+        private static double GetAngle(List<SphereVector> line)
+        {
+            double angle = 0.0;
+            for (int index = 1; index < line.Count; ++index)
+            {
+                angle += line[index - 1].AngleTo(line[index]);
+            }
+
+            return angle;
         }
 
         private static double GetAzimuth(SphereVector point, SphereVector centre, SphereVector east, SphereVector north)
@@ -1275,12 +1254,44 @@ public sealed class EconomicZoneService : IEconomicZoneService
             this.keyed.TryAdd(key, point);
         }
 
-        // The pieces that continue a chain past one end of a piece, in the order they follow on
-        // from it, each turned to run away from it. Stops at a key where anything other than two
-        // pieces of the same kind meet, and at a piece already taken, which is how a loop ends.
-        private List<SphereVector[]> Walk(int index, long key, bool[] visited)
+        // Which country is on either side of a chain as it runs, by the length of it each piece
+        // speaks for. The pieces all ought to agree, and a piece of any length does, but a Voronoi
+        // edge of no length - two triangles sharing a circumcentre, which the samples beside a node
+        // make at every doubling - has a direction made of rounding and says either. Taking a chain's
+        // sides from its first piece took them from one of those 2692 times on this map, and the
+        // median lines so turned round gave Acuguay's sea to Sintaguay and Sintaguay's to Acuguay.
+        // A piece of a length to have a direction and still disagreeing is counted.
+        private (int Left, int Right) GetSides(List<(int Piece, bool IsReversed)> chain)
         {
-            List<SphereVector[]> stretches = [];
+            Dictionary<(int Left, int Right), double> lengths = [];
+            foreach ((int link, bool isReversed) in chain)
+            {
+                Piece piece = this.pieces[link];
+                (int Left, int Right) sides = isReversed ? (piece.Right, piece.Left) : (piece.Left, piece.Right);
+                lengths[sides] = lengths.GetValueOrDefault(sides) + GetAngle(piece.Points);
+            }
+
+            (int Left, int Right) best = lengths.MaxBy(pair => pair.Value).Key;
+            foreach ((int link, bool isReversed) in chain)
+            {
+                Piece piece = this.pieces[link];
+                (int Left, int Right) sides = isReversed ? (piece.Right, piece.Left) : (piece.Left, piece.Right);
+                if ((sides != best) && (GetAngle(piece.Points) >= MinimumSeparation))
+                {
+                    ++this.Inconsistent;
+                }
+            }
+
+            return best;
+        }
+
+        // The pieces that continue a chain past one end of a piece, in the order they follow on
+        // from it, each with whether it is turned round to run away from it. Stops at a key where
+        // anything other than two pieces of the same kind meet, and at a piece already taken, which
+        // is how a loop ends.
+        private List<(int Piece, bool IsReversed)> Walk(int index, long key, bool[] visited)
+        {
+            List<(int Piece, bool IsReversed)> stretches = [];
             int current = index;
             while (this.incident.TryGetValue(key, out List<int>? at)
                 && (at.Count == 2)
@@ -1295,7 +1306,7 @@ public sealed class EconomicZoneService : IEconomicZoneService
                 visited[next] = true;
                 Piece piece = this.pieces[next];
                 bool isReversed = piece.Start != key;
-                stretches.Add(isReversed ? [.. piece.Points.AsEnumerable().Reverse()] : [.. piece.Points]);
+                stretches.Add((next, isReversed));
                 key = isReversed ? piece.Start : piece.End;
                 current = next;
             }
@@ -1316,9 +1327,13 @@ public sealed class EconomicZoneService : IEconomicZoneService
 
         public int Anchored { get; private set; }
 
+        public Dictionary<Arc, ZoneBoundary> Boundaries { get; } = [];
+
         public double Furthest { get; private set; }
 
         public int Grazing { get; private set; }
+
+        public int Reached { get; private set; }
 
         public int Wavering { get; private set; }
 
@@ -1398,7 +1413,9 @@ public sealed class EconomicZoneService : IEconomicZoneService
                 return;
             }
 
-            water.AddArc(boundary.Kind, start, end, water.CoordinateSequenceFactory.Create(interior));
+            this.Boundaries.Add(
+                water.AddArc(boundary.Kind, start, end, water.CoordinateSequenceFactory.Create(interior)),
+                boundary);
         }
 
         // The node at which the line crosses the shore between a point over land and the next over
@@ -1431,6 +1448,14 @@ public sealed class EconomicZoneService : IEconomicZoneService
             {
                 ++this.Anchored;
                 this.Furthest = Math.Max(this.Furthest, distance);
+                return (best, anchored);
+            }
+
+            if ((best != null)
+                && (best.Coordinate.Distance(inside) <= ReachTolerance)
+                && !shore.IsCrossedApartFrom(best.Coordinate, inside))
+            {
+                ++this.Reached;
                 return (best, anchored);
             }
 
@@ -1785,5 +1810,16 @@ public sealed class EconomicZoneService : IEconomicZoneService
         }
     }
 
-    private sealed record Piece(ArcKind Kind, int First, int Second, long Start, long End, List<SphereVector> Points);
+    // A stretch of boundary between two keyed points. First and Second are the two countries in
+    // order, for telling one boundary from another; Left and Right are the same two as the piece
+    // runs, seen from outside the sphere, -1 being the high seas.
+    private sealed record Piece(
+        ArcKind Kind,
+        int First,
+        int Second,
+        int Left,
+        int Right,
+        long Start,
+        long End,
+        List<SphereVector> Points);
 }

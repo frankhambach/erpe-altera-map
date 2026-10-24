@@ -24,7 +24,7 @@ public interface IEconomicZoneService
     // ArcKind.Median and ArcKind.Limit in a graph of their own. It mints its identifiers from the
     // land graph's, and a median line ends at the land graph's own node where its two countries'
     // shores meet, so the two graphs share those nodes and no coast arc is split.
-    ArcGraph AddArcs(
+    ZoneGraph AddArcs(
         ArcGraph arcGraph,
         IEnumerable<Shore> shores,
         IEnumerable<ZoneBoundary> boundaries,

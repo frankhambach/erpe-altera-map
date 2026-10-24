@@ -129,7 +129,7 @@ public class EconomicZoneServiceTests
         ];
         EconomicZoneService service = CreateService();
 
-        ArcGraph water = service.AddArcs(arcGraph, shores, service.GetBoundaries(shores, SourceEnvelope), SourceEnvelope);
+        ArcGraph water = service.AddArcs(arcGraph, shores, service.GetBoundaries(shores, SourceEnvelope), SourceEnvelope).Graph;
 
         Arc[] medians = [.. water.Arcs.Where(arc => arc.Kind == ArcKind.Median)];
         medians.Should().HaveCount(2);
@@ -168,10 +168,10 @@ public class EconomicZoneServiceTests
                     .. geographic.Select(
                         coordinate => projectionService.Unscale(projectionService.Project(coordinate), SourceEnvelope)),
                 ]));
-        Shore[] shores = [new Shore(island, arc, geographic, 0.0)];
+        Shore[] shores = [new Shore(island, arc, geographic, 0.0, false)];
         EconomicZoneService service = new EconomicZoneService(projectionService);
 
-        ArcGraph water = service.AddArcs(arcGraph, shores, service.GetBoundaries(shores, SourceEnvelope), SourceEnvelope);
+        ArcGraph water = service.AddArcs(arcGraph, shores, service.GetBoundaries(shores, SourceEnvelope), SourceEnvelope).Graph;
 
         water.Arcs.Should().HaveCountGreaterThan(1, "the limit is cut where it crosses the antimeridian");
         foreach (Arc limit in water.Arcs)
@@ -220,7 +220,8 @@ public class EconomicZoneServiceTests
                     .Select(
                         coordinate => projectionService.Unproject(projectionService.Rescale(coordinate, SourceEnvelope))),
             ],
-            0.0);
+            0.0,
+            false);
     }
 
     // A shore given in longitude and latitude, drawn into the source map as ConvertCommand would
@@ -237,7 +238,7 @@ public class EconomicZoneServiceTests
                         coordinate => projectionService.Unscale(projectionService.Project(coordinate), SourceEnvelope)),
                 ]));
 
-        return new Shore(owner, arc, coordinates, 0.0);
+        return new Shore(owner, arc, coordinates, 0.0, false);
     }
 
     private static double GetDistance(Coordinate one, Coordinate other)

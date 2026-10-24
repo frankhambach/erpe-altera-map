@@ -17,6 +17,12 @@ public interface ITopologyService
     // below that distance two drawn ends are already taken for one point.
     void BuildFaces(ArcGraph arcGraph, double enclosedArea, double dangleTolerance);
 
+    // The faces of a graph that is already noded, and nothing else: rings traced and outlines put
+    // into the faces that enclose them, as 5f and 5g do, with no arc noded, merged, contracted or
+    // pruned on the way. For a graph whose arcs are shared with another and must stay as they are.
+    // Returns how many outlines enclose no face.
+    int TraceFaces(ArcGraph arcGraph);
+
     LinearRing Close(CoordinateSequence coordinateSequence);
 
     // The boundary of each given set of faces, walked as rings of the arcs it is made of. Every
