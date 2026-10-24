@@ -139,6 +139,8 @@ internal sealed class ConvertCommand : Command
 
     private readonly IDiagnosticsService diagnosticsService;
 
+    private readonly IEconomicZoneService economicZoneService;
+
     private readonly IFaceAssignmentService faceAssignmentService;
 
     private readonly GeometryFactory geometryFactory;
@@ -173,6 +175,7 @@ internal sealed class ConvertCommand : Command
         ITopoJsonService topoJsonService,
         IVerificationService verificationService,
         IRimService rimService,
+        IEconomicZoneService economicZoneService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
     {
@@ -189,6 +192,7 @@ internal sealed class ConvertCommand : Command
         this.topoJsonService = topoJsonService;
         this.verificationService = verificationService;
         this.rimService = rimService;
+        this.economicZoneService = economicZoneService;
         this.geometryFactory = geometryFactory;
 
         Option<FileInfo> inOption = new("--in", "The SVG file to read country shapes from.");
@@ -489,6 +493,14 @@ internal sealed class ConvertCommand : Command
                 outFile.FullName,
                 JsonSerializer.Serialize(featureCollection, JsonSerializerOptions))
             .ConfigureAwait(false);
+    }
+
+    private static void AddZoneArc(ArcGraph zones, ArcKind kind, List<Coordinate> line)
+    {
+        if (line.Count >= 2)
+        {
+            zones.AddArc(kind, zones.CoordinateSequenceFactory.Create([.. line]));
+        }
     }
 
     private static int CountRings(IEnumerable<Country> countries)
@@ -800,6 +812,66 @@ internal sealed class ConvertCommand : Command
         }
     }
 
+    // Every coast and lake shore arc with the country whose land lies behind it, in longitude and
+    // latitude. Asked of the faces between the two passes of 6, the only point at which they carry
+    // the national owner. An arc on the edge of a face 5i left out has no face behind it any more
+    // and is no shore of anybody's; an arc of a face taken round the rim is unprojected with the
+    // face's offset, so that a zone is measured from where the land is and not from where it was
+    // drawn.
+    private IEnumerable<Shore> GetShores(ArcGraph arcGraph, Envelope sourceEnvelope)
+    {
+        Dictionary<Arc, Face> behind = [];
+        foreach (Face face in arcGraph.Faces.Where(face => face.Owner != null))
+        {
+            foreach (DirectedArc directed in face.Holes.Prepend(face.Shell)
+                         .SelectMany(ring => ring)
+                         .Where(directed => directed.Arc.Kind is ArcKind.Coast or ArcKind.Lake))
+            {
+                behind.TryAdd(directed.Arc, face);
+            }
+        }
+
+        return behind.Select(
+            pair => new Shore(
+                pair.Value.Owner!,
+                pair.Key,
+                [
+                    .. pair.Key.GetFullCoordinates()
+                        .Select(
+                            coordinate => this.projectionService.Unproject(
+                                this.projectionService.Rescale(coordinate, sourceEnvelope)))
+                        .Select(coordinate => new Coordinate(coordinate.X + pair.Value.LongitudeOffset, coordinate.Y)),
+                ]));
+    }
+
+    // The zone boundaries back in the source map's coordinates, for the debug file and nothing
+    // else. A line is cut where it crosses the antimeridian, so that it is not drawn the width of
+    // the map back again.
+    private IEnumerable<Arc> GetZoneArcs(IEnumerable<ZoneBoundary> boundaries, Envelope sourceEnvelope)
+    {
+        ArcGraph zones = new ArcGraph(this.geometryFactory.CoordinateSequenceFactory);
+        foreach (ZoneBoundary boundary in boundaries)
+        {
+            List<Coordinate> line = [];
+            for (int index = 0; index < boundary.Coordinates.Count; ++index)
+            {
+                Coordinate coordinate = boundary.Coordinates[index];
+                if ((index > 0) && (Math.Abs(coordinate.X - boundary.Coordinates[index - 1].X) > 180.0))
+                {
+                    AddZoneArc(zones, boundary.Kind, line);
+                    line = [];
+                }
+
+                line.Add(
+                    this.projectionService.Unscale(this.projectionService.Project(coordinate), sourceEnvelope));
+            }
+
+            AddZoneArc(zones, boundary.Kind, line);
+        }
+
+        return zones.Arcs;
+    }
+
     // Every drawn element of the rim, not only the paths: the two long curves are paths but the
     // top and bottom edges are lines, and a frame missing its top and bottom is worse than none.
     private CoordinateSequence[] GetRim(SvgDocument document)
@@ -970,6 +1042,17 @@ internal sealed class ConvertCommand : Command
 
         IReadOnlyList<Face> droppedNational = [.. beyondRim, .. this.assemblyService.Assemble(arcGraph, national)];
         IReadOnlyList<Face> dropped = droppedNational;
+
+        IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(this.GetShores(arcGraph, sourceEnvelope));
+        if (debugSvg)
+        {
+            await this.diagnosticsService.WriteArcsAsync(
+                    this.GetZoneArcs(zones, sourceEnvelope),
+                    rim,
+                    view,
+                    GetDebugFile(outFile, "-zones"))
+                .ConfigureAwait(false);
+        }
 
         if (debugSvg)
         {
