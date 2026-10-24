@@ -817,9 +817,9 @@ internal sealed class ConvertCommand : Command
     }
 
     // Every coast and lake shore arc with the country whose land lies behind it, in longitude and
-    // latitude. Asked of the faces between the two passes of 6, the only point at which they carry
-    // the national owner. An arc on the edge of a face 5i left out has no face behind it any more
-    // and is no shore of anybody's; an arc of a face taken round the rim is unprojected with the
+    // latitude: the unitary state or the substate, asked of the faces before they are handed to
+    // the federations. An arc on the edge of a face 5i left out has no face behind it any more and
+    // is no shore of anybody's; an arc of a face taken round the rim is unprojected with the
     // face's offset, so that a zone is measured from where the land is and not from where it was
     // drawn.
     //
@@ -1047,18 +1047,17 @@ internal sealed class ConvertCommand : Command
 
         this.faceAssignmentService.Assign(arcGraph, finest, true);
         IReadOnlyList<Face> substateDropped = this.assemblyService.Assemble(arcGraph, substates);
-        foreach (Face face in arcGraph.Faces)
-        {
-            if ((face.Owner != null) && federationOf.TryGetValue(face.Owner, out Country? federation))
-            {
-                face.Owner = federation;
-            }
-        }
 
-        IReadOnlyList<Face> droppedNational = [.. beyondRim, .. this.assemblyService.Assemble(arcGraph, national)];
-        IReadOnlyList<Face> dropped = droppedNational;
-
+        // Between the two assemblies, the one point at which every face carries the unitary state
+        // or the substate it belongs to, so that the zones are the substates' wherever a country is
+        // divided into them and the country's everywhere else.
         Shore[] shores = [.. this.GetShores(arcGraph, sourceEnvelope)];
+        Log.Information(
+            "Took {Shores} shores for the economic zones: {Unitary} of unitary states and {Federal} of federal "
+            + "states.",
+            shores.Length,
+            shores.Count(shore => shore.Owner.Type == CountryType.UnitaryState),
+            shores.Count(shore => shore.Owner.Type == CountryType.FederalState));
         IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(shores, sourceEnvelope);
         ZoneGraph water = this.economicZoneService.AddArcs(arcGraph, shores, zones, sourceEnvelope);
 
@@ -1086,6 +1085,17 @@ internal sealed class ConvertCommand : Command
             await this.diagnosticsService.WriteFacesAsync(water.Graph.Faces, view, GetDebugFile(outFile, "-sea"))
                 .ConfigureAwait(false);
         }
+
+        foreach (Face face in arcGraph.Faces)
+        {
+            if ((face.Owner != null) && federationOf.TryGetValue(face.Owner, out Country? federation))
+            {
+                face.Owner = federation;
+            }
+        }
+
+        IReadOnlyList<Face> droppedNational = [.. beyondRim, .. this.assemblyService.Assemble(arcGraph, national)];
+        IReadOnlyList<Face> dropped = droppedNational;
 
         if (debugSvg)
         {
