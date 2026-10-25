@@ -1061,13 +1061,8 @@ internal sealed class ConvertCommand : Command
         IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(shores, sourceEnvelope);
         ZoneGraph water = this.economicZoneService.AddArcs(arcGraph, shores, zones, sourceEnvelope);
 
-        // Not written yet: the zones are assembled in the source map's coordinates and the debug files
-        // below are all there is of them so far.
-        _ = this.zoneAssemblyService.Assemble(
-            water,
-            arcGraph,
-            shores,
-            sourceEnvelope);
+        // In the source map's coordinates, like the land, and taken through 7b with it.
+        Country[] economicZones = [.. this.zoneAssemblyService.Assemble(water, arcGraph, shores, sourceEnvelope)];
         if (debugSvg)
         {
             // Before cutting, the lines as they are found on the sphere, over land as well as
@@ -1121,6 +1116,20 @@ internal sealed class ConvertCommand : Command
         this.UnprojectRim(arcGraph, sourceEnvelope, unprojected);
         this.Unproject(countries, sourceEnvelope, unprojected, offsets);
 
+        // The economic zones after the land, so that what the two have in common - the shores, which
+        // are the land's own arcs - comes out of the memo as the land has it, and a coast is written
+        // with the same numbers on either side of it. The zone boundaries' own points go in as the
+        // longitude and latitude they were found at, and the rim over water at exactly 180 degrees as
+        // the rim over land does. No zone is wrapped: each was measured where its land is and
+        // projected inside the rim, so none takes an offset.
+        foreach ((Coordinate projected, Coordinate geographic) in water.Geographic)
+        {
+            unprojected.TryAdd(projected, geographic);
+        }
+
+        this.UnprojectRim(water.Graph, sourceEnvelope, unprojected);
+        this.Unproject(economicZones, sourceEnvelope, unprojected, new Dictionary<Arc, double>());
+
         // The arcs in the coordinates the output is written in. Simplification is measured
         // in the units of the tolerances, which are degrees, and taking the arcs through
         // the same memo as the shapes means an arc coordinate and the shape coordinate it
@@ -1136,6 +1145,16 @@ internal sealed class ConvertCommand : Command
                         offsets.GetValueOrDefault(arc)))
                 .ToArray());
 
+        // And the sea's own: the zone boundaries and the rim over water. The shores and the rim over
+        // land are the land's arcs and are there already, so a zone and the land beside it refer to
+        // one arc in the topology as two countries either side of a border do.
+        foreach (Arc arc in water.Graph.Arcs.Where(arc => !arcs.ContainsKey(arc)))
+        {
+            arcs.Add(
+                arc,
+                [.. arc.GetFullCoordinates().Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected, 0.0))]);
+        }
+
         Country[] written = countries
             .Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState)
             .ToArray();
@@ -1148,6 +1167,7 @@ internal sealed class ConvertCommand : Command
         national = this.Filter(national, keepEveryCoordinate, "the national layer");
         substates = this.Filter(substates, keepEveryCoordinate, "the substate layer");
         written = this.Filter(written, keepEveryCoordinate, "the combined output");
+        economicZones = this.Filter(economicZones, keepEveryCoordinate, "the economic zones");
 
         // After unprojecting and before writing, so that what is checked is as close to
         // what is written as it can be. Rounding to the output decimals happens as the file
@@ -1163,19 +1183,22 @@ internal sealed class ConvertCommand : Command
         await WriteGeoJsonAsync(written, outFile).ConfigureAwait(false);
         await WriteGeoJsonAsync(national, GetOutFile(outFile, "-no-substates")).ConfigureAwait(false);
         await WriteGeoJsonAsync(substates, GetOutFile(outFile, "-only-substates")).ConfigureAwait(false);
+        await WriteGeoJsonAsync(economicZones, GetOutFile(outFile, "-zones")).ConfigureAwait(false);
 
-        // One topology rather than the three files the GeoJson needs, because the two layers go
-        // into it as two objects over one set of arcs. That is the whole point of the format: a
-        // national border is also the edge of a substate, and here it is one arc with two
-        // references instead of the same line written twice. It is also why out.json carries
-        // segments used three times and this does not.
+        // One topology rather than the four files the GeoJson needs, because the layers go into it
+        // as objects over one set of arcs. That is the whole point of the format: a national border
+        // is also the edge of a substate, and a coast the edge of a zone, and here each is one arc
+        // with two references instead of the same line written twice. It is also why out.json
+        // carries segments used three times and this does not.
         await this.topoJsonService.WriteAsync(
-                [("countries", national), ("substates", substates)],
+                [("countries", national), ("substates", substates), ("zones", economicZones)],
                 arcs,
                 GetTopoJsonFile(outFile, string.Empty))
             .ConfigureAwait(false);
 
-        (LinearRing Ring, DirectedArc[] Arcs)[] protectable = GetProtectable(countries);
+        // The zones' rings as well as the land's. A zone's shell runs along the coast, and a floor
+        // raised on a coast arc to keep a zone a ring keeps the land beside it the same shape.
+        (LinearRing Ring, DirectedArc[] Arcs)[] protectable = GetProtectable(countries.Concat(economicZones));
 
         // The coarse outputs are simplified by arc and not by polygon: which vertices go is
         // decided once for each arc, and then those coordinates are dropped wherever they
@@ -1209,6 +1232,9 @@ internal sealed class ConvertCommand : Command
                     this.Filter(written, removed, "the combined output"),
                     GetOutFile(outFile, output.Suffix))
                 .ConfigureAwait(false);
+            Country[] simplifiedZones = this.Filter(economicZones, removed, "the economic zones");
+            await WriteGeoJsonAsync(simplifiedZones, GetOutFile(outFile, "-zones" + output.Suffix))
+                .ConfigureAwait(false);
 
             // The same rings over shorter arcs. Which vertices went was decided once per arc, so
             // dropping them from the arcs is the whole of simplifying the topology: no reference
@@ -1217,6 +1243,7 @@ internal sealed class ConvertCommand : Command
                     [
                         ("countries", simplified),
                         ("substates", simplifiedSubstates),
+                        ("zones", simplifiedZones),
                     ],
                     arcs.ToDictionary(
                         pair => pair.Key,

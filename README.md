@@ -48,7 +48,8 @@ Writing `--out map.json` produces:
 | `map-no-substates.json` | the national layer alone, which is a partition of the land |
 | `map-only-substates.json` | the substate layer alone, likewise |
 | `map-medium.json`, `map-low.json` | the same at simplification tolerances of 0.001 and 0.01 degrees |
-| `map.topojson`, `map-medium.topojson`, `map-low.topojson` | both layers as one topology per detail level, sharing one set of arcs |
+| `map-zones.json`, `map-zones-medium.json`, `map-zones-low.json` | the exclusive economic zones, 200 nautical miles out to sea and over the lakes, divided by median lines where two countries' zones meet: one per unitary state and one per substate, at each detail level. With the land they are a partition of everything within 200 nautical miles of a shore, a coast written with the same coordinates on either side |
+| `map.topojson`, `map-medium.topojson`, `map-low.topojson` | the national layer, the substate layer and the zones as one topology per detail level, sharing one set of arcs: `countries`, `substates` and `zones` |
 
 The TopoJSON is not derived from the GeoJson by comparing coordinates — it falls out of the arc graph directly, which is what the graph was built for. The two agree about every country, including which way round each ring is wound.
 

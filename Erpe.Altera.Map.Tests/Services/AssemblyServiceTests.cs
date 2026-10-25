@@ -111,6 +111,35 @@ public class AssemblyServiceTests
 
     [AutoCustomizedData]
     [Test]
+    public void Assemble_ShouldKeepTheHole_WhenItTouchesItsShellAtAVertex(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // A lake drawn with its node on a vertex of the coast, in the first of two islands. With
+        // two shells each hole has to be put in the one around it, and asked of that vertex alone
+        // the lake was inside neither and was left out: Kuti was written over Bruni's islet so.
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        ArcGraph arcGraph = new ArcGraph(coordinateSequenceFactory);
+        arcGraph.AddArc(
+            ArcKind.Coast,
+            Create(coordinateSequenceFactory, [(0, 0), (30, 0), (30, 30), (0, 30), (0, 15), (0, 0)]));
+        arcGraph.AddArc(ArcKind.Lake, Create(coordinateSequenceFactory, [(0, 15), (10, 10), (10, 20), (0, 15)]));
+        arcGraph.AddArc(
+            ArcKind.Coast,
+            Create(coordinateSequenceFactory, [(100, 0), (130, 0), (130, 30), (100, 30), (100, 0)]));
+        new TopologyService(geometryFactory).BuildFaces(arcGraph, 0.0, 0.0);
+        Country country = new Country("A", CountryType.UnitaryState);
+        SetOwner(arcGraph.Faces.Where(face => face.Shell.Any(directed => directed.Arc.Kind == ArcKind.Coast)), country);
+
+        CreateService(geometryFactory).Assemble(arcGraph, [country]);
+
+        country.Shapes.Should().HaveCount(2);
+        Shape island = country.Shapes.Single(shape => shape.Polygon.EnvelopeInternal.MinX < 50.0);
+        island.Polygon.Holes.Should().ContainSingle("the lake touches the coast and is still a hole in it");
+        island.Polygon.Area.Should().BeApproximately(850.0, 1E-9);
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void Assemble_ShouldMakeTwoValidShapes_WhenTwoFacesOfOneCountryTouchAtAPoint(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

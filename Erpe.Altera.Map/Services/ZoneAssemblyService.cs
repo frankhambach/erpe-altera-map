@@ -46,29 +46,32 @@ public sealed class ZoneAssemblyService : IZoneAssemblyService
 
     private readonly IAssemblyService assemblyService;
 
+    private readonly IProjectionService projectionService;
+
     private readonly IRimService rimService;
 
     private readonly ITopologyService topologyService;
 
     public ZoneAssemblyService(
+        IProjectionService projectionService,
         IRimService rimService,
         ITopologyService topologyService,
         IAssemblyService assemblyService)
     {
+        ArgumentNullException.ThrowIfNull(projectionService);
         ArgumentNullException.ThrowIfNull(rimService);
         ArgumentNullException.ThrowIfNull(topologyService);
         ArgumentNullException.ThrowIfNull(assemblyService);
 
+        this.projectionService = projectionService;
         this.rimService = rimService;
         this.topologyService = topologyService;
         this.assemblyService = assemblyService;
     }
 
-    // The coasts of land taken round the rim are left out. They are drawn past the edge of the
-    // source map, where its coordinates are outside the rim, while the zone around them was measured
-    // where the land is and projected to the other edge, so in this graph the two would not meet.
-    // On this map that is Anian's islets beyond the eastern rim; the zone round each is traced as a
-    // face with no hole where the islet is.
+    // The coasts of land taken round the rim go in as copies, put where the land is rather than
+    // where it is drawn - see AddWrapped - and once the zones are assembled each copy in them is
+    // swapped back for the land's own arc.
     public IReadOnlyList<Country> Assemble(
         ZoneGraph zones,
         ArcGraph arcGraph,
@@ -90,9 +93,25 @@ public sealed class ZoneAssemblyService : IZoneAssemblyService
             sea.Arcs.Add(arc);
         }
 
+        Dictionary<Arc, Shore> wrapped = this.AddWrapped(
+            sea,
+            all.Where(shore => !shore.LongitudeOffset.Equals(0.0)),
+            landRim,
+            zones.Geographic,
+            sourceEnvelope);
+        foreach ((Arc copy, Shore shore) in wrapped)
+        {
+            drawn.Add(copy, shore);
+        }
+
         Arc[] seaRim =
         [
-            .. this.AddRim(sea, arcGraph, [.. landRim.Concat(drawn.Keys)], zones.Antimeridian, sourceEnvelope),
+            .. this.AddRim(
+                sea,
+                arcGraph,
+                [.. landRim.Concat(drawn.Keys)],
+                zones.Antimeridian.Concat(wrapped.Keys.SelectMany(arc => new[] { arc.StartNode, arc.EndNode })),
+                sourceEnvelope),
         ];
         (int crossings, IReadOnlyList<string> where) = ArcCrossings.Count(
             sea.Arcs.Where(arc => zones.Boundaries.ContainsKey(arc)).Concat(seaRim),
@@ -100,13 +119,13 @@ public sealed class ZoneAssemblyService : IZoneAssemblyService
             MaximumReported);
         Log.Information(
             "Built the sea graph from {Zones} zone arcs, {Shores} shores, {LandRim} stretches of the rim over land "
-            + "and {SeaRim} over water, leaving out {Wrapped} shores of land taken round the rim; {Crossings} "
-            + "crossings left that are not nodes.",
+            + "and {SeaRim} over water, and copies of the {Wrapped} shores of land taken round the rim put where "
+            + "it lies; {Crossings} crossings left that are not nodes.",
             zones.Boundaries.Count,
-            drawn.Count,
+            drawn.Count - wrapped.Count,
             landRim.Length,
             seaRim.Length,
-            all.Length - drawn.Count,
+            wrapped.Count,
             crossings);
         if (where.Count > 0)
         {
@@ -117,6 +136,23 @@ public sealed class ZoneAssemblyService : IZoneAssemblyService
         Country[] zoneCountries = Assign(sea, zones, drawn, unenclosed);
 
         IReadOnlyList<Face> dropped = this.assemblyService.Assemble(sea, zoneCountries);
+        foreach (IList<Shape> shapes in zoneCountries.Select(country => country.Shapes))
+        {
+            for (int i = 0; i < shapes.Count; ++i)
+            {
+                Shape shape = shapes[i];
+                shapes[i] = new Shape(
+                    shape.Id,
+                    shape.Polygon,
+                    shape.Rings.Select(
+                        ring => ring.Select(
+                                directed => wrapped.TryGetValue(directed.Arc, out Shore? shore)
+                                    ? new DirectedArc(shore.Arc, directed.IsReversed)
+                                    : directed)
+                            .ToArray()));
+            }
+        }
+
         Log.Information(
             "Assembled the economic zones of {Countries} countries into {Shapes} shapes; {Dropped} faces left out.",
             zoneCountries.Length,
@@ -303,7 +339,7 @@ public sealed class ZoneAssemblyService : IZoneAssemblyService
         ArcGraph sea,
         ArcGraph arcGraph,
         Arc[] drawnAlready,
-        IReadOnlyCollection<Node> antimeridian,
+        IEnumerable<Node> antimeridian,
         Envelope sourceEnvelope)
     {
         Arc[] landRim = [.. drawnAlready.Where(arc => arc.Kind == ArcKind.Rim)];
@@ -369,6 +405,81 @@ public sealed class ZoneAssemblyService : IZoneAssemblyService
         }
 
         return added;
+    }
+
+    // A copy of each shore of land taken round the rim, put where the land lies, each with the shore
+    // it copies. The shore is drawn past the edge of the source map and lies at the other edge of
+    // it, and its zone was measured where it lies and projected there; left out, as it was, the zone
+    // took no hole for the land, and on this map Anian's zone covered Anian-23 and the far parts of
+    // Anian-21, -22 and -43, and ran along the rim where they meet it the way they do, 11 segments
+    // of it.
+    //
+    // A copy is the shore's own longitude and latitude projected into the source map, and the
+    // longitude and latitude go into the record 7b takes them back from, so that it writes the
+    // copy's points as the land's. Where the shore meets the rim that is exactly 180 degrees, as 7b
+    // writes the rim, and the copy's node then lies on the antimeridian, where the rim over water is
+    // cut at it. Copies of shores that meet at a node share a copy of the node.
+    private Dictionary<Arc, Shore> AddWrapped(
+        ArcGraph sea,
+        IEnumerable<Shore> shores,
+        Arc[] landRim,
+        IDictionary<Coordinate, Coordinate> geographic,
+        Envelope sourceEnvelope)
+    {
+        HashSet<Node> onRim = [.. landRim.SelectMany(arc => new[] { arc.StartNode, arc.EndNode })];
+        Dictionary<Node, Node> nodes = [];
+        Dictionary<Arc, Shore> copies = [];
+        foreach (Shore shore in shores)
+        {
+            IReadOnlyList<Coordinate> coordinates = shore.Coordinates;
+            Node start = this.GetCopy(sea, nodes, onRim, shore.Arc.StartNode, coordinates[0], geographic, sourceEnvelope);
+            Node end = shore.Arc.IsClosed
+                ? start
+                : this.GetCopy(sea, nodes, onRim, shore.Arc.EndNode, coordinates[^1], geographic, sourceEnvelope);
+            Coordinate[] interior =
+            [
+                .. coordinates.Skip(1)
+                    .Take(coordinates.Count - 2)
+                    .Select(coordinate => this.Place(coordinate, geographic, sourceEnvelope)),
+            ];
+            copies.Add(sea.AddArc(shore.Arc.Kind, start, end, sea.CoordinateSequenceFactory.Create(interior)), shore);
+        }
+
+        return copies;
+    }
+
+    private Node GetCopy(
+        ArcGraph sea,
+        Dictionary<Node, Node> nodes,
+        HashSet<Node> onRim,
+        Node node,
+        Coordinate at,
+        IDictionary<Coordinate, Coordinate> geographic,
+        Envelope sourceEnvelope)
+    {
+        if (!nodes.TryGetValue(node, out Node? copy))
+        {
+            Coordinate where = at;
+            if (onRim.Contains(node))
+            {
+                where = new Coordinate(at.X < 0.0 ? -180.0 : 180.0, at.Y);
+            }
+
+            copy = sea.AddNode(this.Place(where, geographic, sourceEnvelope));
+            nodes.Add(node, copy);
+        }
+
+        return copy;
+    }
+
+    // A point given in longitude and latitude, in the source map's coordinates, with the longitude
+    // and latitude recorded against it.
+    private Coordinate Place(Coordinate coordinate, IDictionary<Coordinate, Coordinate> geographic, Envelope sourceEnvelope)
+    {
+        Coordinate placed = this.projectionService.Unscale(this.projectionService.Project(coordinate), sourceEnvelope);
+        geographic.TryAdd(placed, coordinate);
+
+        return placed;
     }
 
     // The lengths of a face's boundary for each owner it could have: land, the high seas, or a

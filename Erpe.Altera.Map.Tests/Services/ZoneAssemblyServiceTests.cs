@@ -51,6 +51,7 @@ public class ZoneAssemblyServiceTests
         EconomicZoneService economicZoneService = new EconomicZoneService(projectionService);
         TopologyService topologyService = new TopologyService(geometryFactory);
         ZoneAssemblyService service = new ZoneAssemblyService(
+            projectionService,
             new RimService(geometryFactory, projectionService),
             topologyService,
             new AssemblyService(geometryFactory, topologyService));
@@ -77,9 +78,11 @@ public class ZoneAssemblyServiceTests
     public void Assemble_ShouldThrowArgumentNullException_WhenTheZonesAreNull()
     {
         GeometryFactory geometryFactory = new GeometryFactory();
+        WinkelTripelProjectionService projectionService = new WinkelTripelProjectionService(geometryFactory);
         TopologyService topologyService = new TopologyService(geometryFactory);
         ZoneAssemblyService service = new ZoneAssemblyService(
-            new RimService(geometryFactory, new WinkelTripelProjectionService(geometryFactory)),
+            projectionService,
+            new RimService(geometryFactory, projectionService),
             topologyService,
             new AssemblyService(geometryFactory, topologyService));
 

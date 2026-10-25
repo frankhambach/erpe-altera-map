@@ -1152,6 +1152,65 @@ public sealed class TopologyService : ITopologyService
         return directed.EndNode;
     }
 
+    // The smallest shell that encloses an outline, or -1, asked of the outline's vertices. Any
+    // vertex will do for an outline that touches nothing, and the first is asked first. But an
+    // outline can touch the shell around it at a vertex, where an islet is drawn with its node on
+    // the coast beside it, and that vertex is on the shell and not inside it: asked of it alone, the
+    // islet was enclosed by nothing. In the sea the zones round two islets took no hole for them,
+    // Qulalliq's and one of Magallanica's. So a vertex on the boundary of a shell it is not inside
+    // says nothing, and the next is asked.
+    //
+    // Not where the shell is the land the outline bounds, which it touches all along and never
+    // encloses. A shell enclosing an outline never shares an arc with it, since the two would then
+    // be one ring. And vertices rather than points between them: a point worked out in floating
+    // point lies a hair to one side of its segment, and asking of the middle of the first segment
+    // instead put 74% of the land in no face, every outline a hole of the land inside it.
+    private static int FindEnclosing(
+        GeometryFactory geometryFactory,
+        DirectedArc[] ring,
+        (DirectedArc[] Ring, double SignedArea)[] shells,
+        Polygon[] polygons,
+        STRtree<int> index,
+        IPreparedGeometry?[] prepared,
+        HashSet<Arc>?[] shellArcs)
+    {
+        HashSet<Arc> own = [.. ring.Select(directed => directed.Arc)];
+        foreach (Coordinate vertex in ring.SelectMany(GetCoordinates))
+        {
+            Point test = geometryFactory.CreatePoint(vertex);
+            int best = -1;
+            bool isTouching = false;
+            foreach (int i in index.Query(new Envelope(vertex)))
+            {
+                shellArcs[i] ??= [.. shells[i].Ring.Select(directed => directed.Arc)];
+                if (shellArcs[i]!.Overlaps(own))
+                {
+                    continue;
+                }
+
+                prepared[i] ??= PreparedGeometryFactory.Prepare(polygons[i]);
+                if (prepared[i]!.Contains(test))
+                {
+                    if ((best < 0) || (shells[i].SignedArea < shells[best].SignedArea))
+                    {
+                        best = i;
+                    }
+                }
+                else if (prepared[i]!.Covers(test))
+                {
+                    isTouching = true;
+                }
+            }
+
+            if (!isTouching)
+            {
+                return best;
+            }
+        }
+
+        return -1;
+    }
+
     private static double GetSignedArea(IEnumerable<DirectedArc> ring)
     {
         double area = 0.0;
@@ -1353,6 +1412,7 @@ public sealed class TopologyService : ITopologyService
         // on: a stretch of high seas is a polygon of hundreds of thousands of points with thousands
         // of islands to place, and Contains walks every point each time. The answers are the same.
         IPreparedGeometry?[] prepared = new IPreparedGeometry?[shells.Length];
+        HashSet<Arc>?[] shellArcs = new HashSet<Arc>?[shells.Length];
         int unenclosed = 0;
         foreach ((DirectedArc[] ring, double _) in outlines)
         {
@@ -1361,18 +1421,7 @@ public sealed class TopologyService : ITopologyService
             // shell as enclosing its own outline and no island would ever reach the ocean.
             // Contains excludes that, while still holding for a lake outline lying inside
             // the island around it.
-            Coordinate point = GetCoordinates(ring[0])[0];
-            Point test = this.geometryFactory.CreatePoint(point);
-            int best = -1;
-            foreach (int i in index.Query(new Envelope(point)))
-            {
-                prepared[i] ??= PreparedGeometryFactory.Prepare(polygons[i]);
-                if (prepared[i]!.Contains(test) && ((best < 0) || (shells[i].SignedArea < shells[best].SignedArea)))
-                {
-                    best = i;
-                }
-            }
-
+            int best = FindEnclosing(this.geometryFactory, ring, shells, polygons, index, prepared, shellArcs);
             if (best < 0)
             {
                 ++unenclosed;

@@ -198,16 +198,7 @@ public sealed class AssemblyService : IAssemblyService
             Polygon[] lobes = [.. shells.Select(shell => this.geometryFactory.CreatePolygon(shell.Ring))];
             foreach ((LinearRing hole, DirectedArc[] arcs) in holes)
             {
-                int best = -1;
-                for (int i = 0; i < lobes.Length; ++i)
-                {
-                    if (lobes[i].Contains(this.geometryFactory.CreatePoint(hole.GetCoordinateN(0)))
-                        && ((best < 0) || (lobes[i].Area < lobes[best].Area)))
-                    {
-                        best = i;
-                    }
-                }
-
+                int best = this.FindEnclosing(lobes, hole);
                 if (best >= 0)
                 {
                     byLobe[best].Add((hole, arcs));
@@ -219,6 +210,42 @@ public sealed class AssemblyService : IAssemblyService
             (shell, i) => (
                 this.geometryFactory.CreatePolygon(shell.Ring, [.. byLobe[i].Select(hole => hole.Ring)]),
                 (DirectedArc[][])[shell.Arcs, .. byLobe[i].Select(hole => hole.Arcs)]));
+    }
+
+    // The smallest shell that encloses a hole, or -1, asked of the hole's vertices in turn until
+    // one lies on no shell's boundary. A hole can touch its shell at a vertex, where an islet is
+    // drawn with its node on the coast beside it, and asked of that vertex alone it was enclosed by
+    // nothing and left out: the zone round it was written with no hole there. ITopologyService
+    // places an outline among the faces the same way.
+    private int FindEnclosing(Polygon[] lobes, LinearRing hole)
+    {
+        foreach (Coordinate vertex in hole.Coordinates)
+        {
+            Point test = this.geometryFactory.CreatePoint(vertex);
+            int best = -1;
+            bool isTouching = false;
+            for (int i = 0; i < lobes.Length; ++i)
+            {
+                if (lobes[i].Contains(test))
+                {
+                    if ((best < 0) || (lobes[i].Area < lobes[best].Area))
+                    {
+                        best = i;
+                    }
+                }
+                else if (lobes[i].Covers(test))
+                {
+                    isTouching = true;
+                }
+            }
+
+            if (!isTouching)
+            {
+                return best;
+            }
+        }
+
+        return -1;
     }
 
     private LinearRing? CreateRing(List<Coordinate> coordinates)

@@ -311,12 +311,21 @@ public sealed class EconomicZoneService : IEconomicZoneService
         ArcGraph water = new ArcGraph(arcGraph);
         WaterCut cut = new WaterCut(water, new ShoreIndex(arcGraph.Arcs), GetMeetings(shores));
         HashSet<Coordinate> antimeridian = [];
+        Dictionary<Coordinate, Coordinate> geographic = [];
         foreach (ZoneBoundary boundary in boundaries)
         {
             Coordinate[][] lines =
             [
                 .. SplitAtAntimeridian(boundary.Coordinates)
-                    .Select(part => part.Select(coordinate => this.Project(coordinate, sourceEnvelope)).ToArray()),
+                    .Select(
+                        part => part.Select(
+                                coordinate =>
+                                {
+                                    Coordinate projected = this.Project(coordinate, sourceEnvelope);
+                                    geographic.TryAdd(projected, coordinate);
+                                    return projected;
+                                })
+                            .ToArray()),
             ];
             for (int index = 1; index < lines.Length; ++index)
             {
@@ -378,7 +387,8 @@ public sealed class EconomicZoneService : IEconomicZoneService
         return new ZoneGraph(
             water,
             cut.Boundaries,
-            [.. water.Nodes.Where(node => antimeridian.Contains(node.Coordinate))]);
+            [.. water.Nodes.Where(node => antimeridian.Contains(node.Coordinate))],
+            geographic);
     }
 
     // The triangulation is planar Delaunay on
