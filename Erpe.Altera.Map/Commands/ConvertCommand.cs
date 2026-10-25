@@ -531,6 +531,35 @@ internal sealed class ConvertCommand : Command
                 .Select(directed => directed.Arc),
         ];
 
+        return GetLines(arcs, oneSided, removed);
+    }
+
+    // Every stretch of boundary that may have only one side where the land and the zones are
+    // checked together: the zones' outer limit, beyond which are the high seas; the rim, over land
+    // or over water; the edge of each face left out; and the shores no zone lies beside.
+    private static Coordinate[][] GetOneSidedAtSea(
+        Dictionary<Arc, Coordinate[]> arcs,
+        HashSet<(double X, double Y)>? removed,
+        IEnumerable<Face> dropped,
+        IEnumerable<Arc> unbordered)
+    {
+        HashSet<Arc> oneSided =
+        [
+            .. arcs.Keys.Where(arc => arc.Kind is ArcKind.Limit or ArcKind.Rim),
+            .. unbordered,
+            .. dropped.SelectMany(face => face.Holes.Prepend(face.Shell))
+                .SelectMany(ring => ring)
+                .Select(directed => directed.Arc),
+        ];
+
+        return GetLines(arcs, oneSided, removed);
+    }
+
+    private static Coordinate[][] GetLines(
+        Dictionary<Arc, Coordinate[]> arcs,
+        IEnumerable<Arc> oneSided,
+        HashSet<(double X, double Y)>? removed)
+    {
         return
         [
             .. oneSided.Where(arcs.ContainsKey)
@@ -538,6 +567,64 @@ internal sealed class ConvertCommand : Command
                     ? arcs[arc]
                     : arcs[arc].Where(coordinate => !removed.Contains((coordinate.X, coordinate.Y))).ToArray()),
         ];
+    }
+
+    // The coasts and lake shores of the land that no zone lies beside, each counted once and named
+    // by the country whose land it bounds. Every shore was given a zone, so these are where there is
+    // no water beside the land to put one in. On this map that is 10 arcs of 97 segments: 93 of
+    // Antarctica's coast along the edge of the map at the pole, and two coast arcs of 2 segments
+    // with land on both sides, at Mukini and Burar and at Maranhao and Piaui, which GetShores takes
+    // for no shore at all. Named rather than taken on trust, since a shore a zone should have
+    // bordered and did not comes out here too: with holes placed by their first vertex, as they
+    // were, the three islets the zones covered were listed beside these.
+    private static HashSet<Arc> GetShoresWithoutZone(
+        IEnumerable<Country> land,
+        IEnumerable<Country> zones,
+        Dictionary<Arc, Coordinate[]> arcs)
+    {
+        HashSet<Arc> bordered =
+        [
+            .. zones.SelectMany(country => country.Shapes)
+                .SelectMany(shape => shape.Rings)
+                .SelectMany(ring => ring)
+                .Select(directed => directed.Arc),
+        ];
+        Dictionary<Arc, string> unbordered = [];
+        foreach (Country country in land)
+        {
+            foreach (Arc arc in country.Shapes.SelectMany(shape => shape.Rings)
+                         .SelectMany(ring => ring)
+                         .Select(directed => directed.Arc)
+                         .Where(arc => (arc.Kind is ArcKind.Coast or ArcKind.Lake) && !bordered.Contains(arc)))
+            {
+                unbordered.TryAdd(arc, country.Id);
+            }
+        }
+
+        if (unbordered.Count > 0)
+        {
+            Log.Information(
+                "{Arcs} coast and lake shore arcs of {Segments} segments have no zone beside them: {Which}.",
+                unbordered.Count,
+                unbordered.Keys.Sum(arc => arcs.TryGetValue(arc, out Coordinate[]? line) ? line.Length - 1 : 0),
+                string.Join(
+                    ", ",
+                    unbordered.GroupBy(pair => pair.Value)
+                        .Select(
+                            group => string.Create(
+                                CultureInfo.InvariantCulture,
+                                $"{group.Sum(pair => arcs.TryGetValue(pair.Key, out Coordinate[]? line) ? line.Length - 1 : 0)} of {group.Key}'s from {GetStart(arcs, group.First().Key)}"))));
+        }
+
+        return [.. unbordered.Keys];
+    }
+
+    // Where an arc starts, in the coordinates it is written in.
+    private static string GetStart(Dictionary<Arc, Coordinate[]> arcs, Arc arc)
+    {
+        return arcs.TryGetValue(arc, out Coordinate[]? line) && (line.Length > 0)
+            ? string.Create(CultureInfo.InvariantCulture, $"{line[0].X:F4}, {line[0].Y:F4}")
+            : "nowhere written";
     }
 
     // The rings a tolerance could cost their ground, each with the arcs whose floors are the only
@@ -1180,6 +1267,20 @@ internal sealed class ConvertCommand : Command
         this.verificationService.VerifySharing(national, GetOneSided(arcs, null, droppedNational));
         this.verificationService.VerifySharing(substates, null);
 
+        // And the land and the sea together, the partition the zones complete: every coast and lake
+        // shore is used twice now, by the land and by the zone beside it, the other way round. The
+        // unitary states and the substates, since the zones are theirs. What may have one side is
+        // the zones' outer limit, the rim, the edge of a face left out, and a shore no zone lies
+        // beside at all - see GetShoresWithoutZone. And since an island a zone has no hole for has
+        // its coast used once like any other, the two are asked whether either lies inside the
+        // other as well.
+        Face[] droppedFaces = [.. droppedNational, .. substateDropped];
+        HashSet<Arc> unbordered = GetShoresWithoutZone(written, economicZones, arcs);
+        this.verificationService.VerifySharing(
+            [.. written, .. economicZones],
+            GetOneSidedAtSea(arcs, null, droppedFaces, unbordered));
+        this.verificationService.VerifyDisjoint(written, economicZones);
+
         await WriteGeoJsonAsync(written, outFile).ConfigureAwait(false);
         await WriteGeoJsonAsync(national, GetOutFile(outFile, "-no-substates")).ConfigureAwait(false);
         await WriteGeoJsonAsync(substates, GetOutFile(outFile, "-only-substates")).ConfigureAwait(false);
@@ -1228,11 +1329,12 @@ internal sealed class ConvertCommand : Command
                 CountRings(simplified),
                 CountRings(national));
             this.verificationService.VerifySharing(simplified, GetOneSided(arcs, removed, droppedNational));
-            await WriteGeoJsonAsync(
-                    this.Filter(written, removed, "the combined output"),
-                    GetOutFile(outFile, output.Suffix))
-                .ConfigureAwait(false);
+            Country[] simplifiedWritten = this.Filter(written, removed, "the combined output");
+            await WriteGeoJsonAsync(simplifiedWritten, GetOutFile(outFile, output.Suffix)).ConfigureAwait(false);
             Country[] simplifiedZones = this.Filter(economicZones, removed, "the economic zones");
+            this.verificationService.VerifySharing(
+                [.. simplifiedWritten, .. simplifiedZones],
+                GetOneSidedAtSea(arcs, removed, droppedFaces, unbordered));
             await WriteGeoJsonAsync(simplifiedZones, GetOutFile(outFile, "-zones" + output.Suffix))
                 .ConfigureAwait(false);
 

@@ -25,4 +25,10 @@ public interface IVerificationService
     // closed loop whichever coordinates it is made of. Pass nothing for a layer that does
     // not cover the land, which has no coast to be held to.
     SharingReport VerifySharing(IEnumerable<Country> countries, IEnumerable<Coordinate[]>? coastLines);
+
+    // That the land and the economic zones do not overlap: a point inside every shape of either is
+    // inside nothing of the other. What VerifySharing cannot see, since an island a zone has no hole
+    // for still has every segment of its coast used once, as a coast should be. Answers how many
+    // shapes lie inside one of the other kind.
+    int VerifyDisjoint(IEnumerable<Country> land, IEnumerable<Country> zones);
 }

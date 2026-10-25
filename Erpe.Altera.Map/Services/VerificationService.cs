@@ -5,12 +5,16 @@ namespace Erpe.Altera.Map.Services;
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 using Erpe.Altera.Map.Contracts;
 using Erpe.Altera.Map.Models;
 
+using NetTopologySuite.Algorithm;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Prepared;
+using NetTopologySuite.Index.Strtree;
 
 using Serilog;
 
@@ -29,10 +33,13 @@ public sealed class VerificationService : IVerificationService
     // sound run produces and 340 times less than a real break: thinning every ring on its own,
     // which is what per-polygon simplification does, leaves 34% of the boundary unpaired.
     //
-    // The 5 that remain are two places, and neither is a sharing failure. Agurania carries 2
-    // segments over 0.029 degrees, and Bruni 3 that make a triangle of no area with sides under
-    // a milli-degree. They are the output's six decimals showing, not a border with one side.
+    // None remain. The last 3 were taken for the output's six decimals showing and were not: they
+    // were Bruni's islet, which Kuti was written over without a hole for it, since the islet is
+    // drawn with its node on Kuti's lake shore and was placed by that vertex alone.
     private const double MaximumUnpairedShare = 0.001;
+
+    // How many of the shapes found inside a shape of the other kind are named in the log.
+    private const int MaximumReported = 20;
 
     public SharingReport VerifySharing(IEnumerable<Country> countries, IEnumerable<Coordinate[]>? coastLines)
     {
@@ -72,6 +79,86 @@ public sealed class VerificationService : IVerificationService
         Report(report, coastLines != null);
 
         return report;
+    }
+
+    // Asked of a point inside each shape, which is enough for what this is for: a shape wholly
+    // inside one of the other kind, an island a zone took no hole for. A shape that overlaps
+    // another only in part shares no border with it where it should, and VerifySharing finds the
+    // segments that has unpaired or used three times.
+    public int VerifyDisjoint(IEnumerable<Country> land, IEnumerable<Country> zones)
+    {
+        ArgumentNullException.ThrowIfNull(land);
+        ArgumentNullException.ThrowIfNull(zones);
+
+        Country[] landCountries = [.. land];
+        Country[] zoneCountries = [.. zones];
+        List<string> inside =
+        [
+            .. FindInside(landCountries, zoneCountries, "land"),
+            .. FindInside(zoneCountries, landCountries, "zone"),
+        ];
+        int shapes = landCountries.Sum(country => country.Shapes.Count) + zoneCountries.Sum(country => country.Shapes.Count);
+        if (inside.Count > 0)
+        {
+            Log.Error(
+                "{Inside} of the {Shapes} shapes of the land and the economic zones lie inside a shape of the other "
+                + "kind, so the two overlap there: {Which}.",
+                inside.Count,
+                shapes,
+                string.Join("; ", inside.Take(MaximumReported)));
+        }
+        else
+        {
+            Log.Information(
+                "Checked the {Shapes} shapes of the land and the economic zones for overlap: none lies inside a shape of "
+                + "the other kind.",
+                shapes);
+        }
+
+        return inside.Count;
+    }
+
+    // Each shape of the one set that has a point inside it inside a shape of the other, named with
+    // the shape it lies in.
+    private static IEnumerable<string> FindInside(Country[] shapes, Country[] others, string kind)
+    {
+        STRtree<(Shape Shape, Country Country)> index = new STRtree<(Shape Shape, Country Country)>();
+        foreach (Country country in others)
+        {
+            foreach (Shape shape in country.Shapes.Where(shape => !shape.Polygon.IsEmpty))
+            {
+                index.Insert(shape.Polygon.EnvelopeInternal, (shape, country));
+            }
+        }
+
+        Dictionary<Shape, IPreparedGeometry> prepared = [];
+        foreach ((Country country, Shape shape) in shapes.SelectMany(
+                     country => country.Shapes.Where(shape => !shape.Polygon.IsEmpty).Select(shape => (country, shape))))
+        {
+            // The point as the algorithm finds it. Polygon.InteriorPoint puts it on the factory's
+            // precision model, which is Program.cs's 0.0001 and here in degrees, 11 m: it moved the
+            // point of a zone 0.4 m wide - the two halves of a lake triangle 7.5 m long between
+            // Michigan and Muskigumee - off the zone and into Michigan.
+            Point point = new Point(InteriorPoint.GetInteriorCoord(shape.Polygon));
+            foreach ((Shape other, Country owner) in index.Query(point.EnvelopeInternal))
+            {
+                if (!prepared.TryGetValue(other, out IPreparedGeometry? geometry))
+                {
+                    geometry = PreparedGeometryFactory.Prepare(other.Polygon);
+                    prepared.Add(other, geometry);
+                }
+
+                if (geometry.Contains(point))
+                {
+                    // How much of it lies there, which tells a shape drawn over another, at all of
+                    // it, from one that only touches. Measured and not used to repair anything.
+                    double shared = shape.Polygon.Intersection(other.Polygon).Area / shape.Polygon.Area;
+                    yield return string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"{kind} {shape.Id} of {country.Id} at {point.X:F6}, {point.Y:F6} in {owner.Id}'s {other.Id}, {shared:P1} of it");
+                }
+            }
+        }
     }
 
     // Rings are wound whichever way the face they came from was traced, and the writer
@@ -170,9 +257,9 @@ public sealed class VerificationService : IVerificationService
         if (report.UnpairedShare > MaximumUnpairedShare)
         {
             Log.Error(
-                "{Unpaired} of the {UsedOnce} segments used once are neither coast nor lake shore nor the edge "
-                + "of a face left out, which is {UnpairedShare:0.000%} of the boundary. Borders are not being "
-                + "shared.",
+                "{Unpaired} of the {UsedOnce} segments used once lie on no line that may have one side to it - a "
+                + "coast, a lake shore, the rim, an outer limit or the edge of a face left out - which is "
+                + "{UnpairedShare:0.000%} of the boundary. Borders are not being shared.",
                 report.Unpaired,
                 report.UsedOnce,
                 report.UnpairedShare);
@@ -182,8 +269,8 @@ public sealed class VerificationService : IVerificationService
 
         Log.Information(
             "Of the {Segments} segments, {Shared} are shared exactly and {OneSided} have one side to them, of "
-            + "which {Unpaired} ({UnpairedShare:0.000%} of the boundary) are neither coast nor lake shore nor "
-            + "the edge of a face left out and remain unaccounted for.",
+            + "which {Unpaired} ({UnpairedShare:0.000%} of the boundary) lie on no line that may have one side to "
+            + "it and remain unaccounted for.",
             report.Segments,
             report.Shared,
             report.UsedOnce,
