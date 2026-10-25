@@ -79,6 +79,32 @@ public class TopologyServiceFaceTests
 
     [AutoCustomizedData]
     [Test]
+    public void BuildFaces_ShouldGiveTheIsletToTheLake_WhenItTouchesTheLakeShoreAtItsNode(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // An islet drawn with its node on a vertex of the lake shore. That vertex lies on the
+        // lake's shell and not inside it, so asked of it alone the islet was enclosed only by the
+        // island around the lake, and became a hole of the land rather than of the water.
+        ArcGraph arcGraph = CreateGraph(coordinateSequenceFactory);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]);
+        AddArc(
+            arcGraph,
+            coordinateSequenceFactory,
+            ArcKind.Lake,
+            [(10, 10), (20, 10), (20, 20), (10, 20), (10, 15), (10, 10)]);
+        AddArc(arcGraph, coordinateSequenceFactory, ArcKind.Coast, [(10, 15), (12, 14), (12, 16), (10, 15)]);
+
+        CreateService(coordinateSequenceFactory).BuildFaces(arcGraph, 0.0, 0.0);
+
+        Face lake = arcGraph.Faces.Single(face => face.Shell.All(directed => directed.Arc.Kind == ArcKind.Lake));
+        lake.Holes.Should()
+            .ContainSingle()
+            .Which.Should()
+            .OnlyContain(directed => directed.Arc.Kind == ArcKind.Coast, "the islet is the lake's");
+    }
+
+    [AutoCustomizedData]
+    [Test]
     public void BuildFaces_ShouldNodeTheCrossing_WhenTwoArcsCrossAwayFromANode(
         CoordinateSequenceFactory coordinateSequenceFactory)
     {

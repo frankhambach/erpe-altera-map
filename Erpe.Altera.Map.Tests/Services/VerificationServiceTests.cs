@@ -151,6 +151,46 @@ public class VerificationServiceTests
         action.Should().Throw<ArgumentNullException>();
     }
 
+    [AutoCustomizedData]
+    [Test]
+    public void VerifyDisjoint_ShouldFindNothing_WhenTheZoneHasAHoleForTheIsland(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        Country island = CreateCountry(geometryFactory, "Island", 10, 10, 10);
+        Country zone = CreateZone(geometryFactory, true);
+
+        int inside = new VerificationService().VerifyDisjoint([island], [zone]);
+
+        inside.Should().Be(0);
+    }
+
+    [AutoCustomizedData]
+    [Test]
+    public void VerifyDisjoint_ShouldFindTheIsland_WhenTheZoneHasNoHoleForIt(
+        CoordinateSequenceFactory coordinateSequenceFactory)
+    {
+        // The failure the check exists for, and the one sharing cannot see: the island's coast is
+        // used once, as a coast should be, while the zone is drawn straight over it.
+        GeometryFactory geometryFactory = CreateGeometryFactory(coordinateSequenceFactory);
+        Country island = CreateCountry(geometryFactory, "Island", 10, 10, 10);
+        Country zone = CreateZone(geometryFactory, false);
+
+        SharingReport report = new VerificationService().VerifySharing([island, zone], null);
+        int inside = new VerificationService().VerifyDisjoint([island], [zone]);
+
+        report.Excess.Should().Be(0, "no segment is used more than once");
+        inside.Should().Be(2, "the island lies inside the zone, and the zone's middle is the island");
+    }
+
+    [Test]
+    public void VerifyDisjoint_ShouldThrowArgumentNullException_WhenTheZonesAreNull()
+    {
+        Action action = () => new VerificationService().VerifyDisjoint([], null!);
+
+        action.Should().Throw<ArgumentNullException>();
+    }
+
     // The coast around a pair of squares that sit side by side: six of their eight edges,
     // split where the border between them reaches the sea, which is what welding leaves.
     private static Coordinate[][] CreateCoast()
@@ -184,6 +224,22 @@ public class VerificationServiceTests
             id,
             CountryType.UnitaryState,
             [new Shape(id + "-0", geometryFactory.CreatePolygon(CreateRing(x, y, size, size)))]);
+    }
+
+    // A zone 30 units square around an island 10 units square in its middle, with a hole for the
+    // island or without one.
+    private static Country CreateZone(GeometryFactory geometryFactory, bool hasHole)
+    {
+        LinearRing[] holes = hasHole ? [geometryFactory.CreateLinearRing(CreateRing(10, 10, 10, 10))] : [];
+
+        return new Country(
+            "Island",
+            CountryType.UnitaryState,
+            [
+                new Shape(
+                    "Island-0",
+                    geometryFactory.CreatePolygon(geometryFactory.CreateLinearRing(CreateRing(0, 0, 30, 30)), holes)),
+            ]);
     }
 
     private static GeometryFactory CreateGeometryFactory(CoordinateSequenceFactory coordinateSequenceFactory)

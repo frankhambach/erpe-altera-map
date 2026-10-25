@@ -139,6 +139,10 @@ internal sealed class ConvertCommand : Command
 
     private readonly IDiagnosticsService diagnosticsService;
 
+    private readonly IEconomicZoneService economicZoneService;
+
+    private readonly IZoneAssemblyService zoneAssemblyService;
+
     private readonly IFaceAssignmentService faceAssignmentService;
 
     private readonly GeometryFactory geometryFactory;
@@ -173,6 +177,8 @@ internal sealed class ConvertCommand : Command
         ITopoJsonService topoJsonService,
         IVerificationService verificationService,
         IRimService rimService,
+        IEconomicZoneService economicZoneService,
+        IZoneAssemblyService zoneAssemblyService,
         GeometryFactory geometryFactory)
         : base("convert", "Convert an SVG world map to GeoJson.")
     {
@@ -189,6 +195,8 @@ internal sealed class ConvertCommand : Command
         this.topoJsonService = topoJsonService;
         this.verificationService = verificationService;
         this.rimService = rimService;
+        this.economicZoneService = economicZoneService;
+        this.zoneAssemblyService = zoneAssemblyService;
         this.geometryFactory = geometryFactory;
 
         Option<FileInfo> inOption = new("--in", "The SVG file to read country shapes from.");
@@ -491,6 +499,14 @@ internal sealed class ConvertCommand : Command
             .ConfigureAwait(false);
     }
 
+    private static void AddZoneArc(ArcGraph zones, ArcKind kind, List<Coordinate> line)
+    {
+        if (line.Count >= 2)
+        {
+            zones.AddArc(kind, zones.CoordinateSequenceFactory.Create([.. line]));
+        }
+    }
+
     private static int CountRings(IEnumerable<Country> countries)
     {
         return countries.SelectMany(country => country.Shapes)
@@ -515,6 +531,35 @@ internal sealed class ConvertCommand : Command
                 .Select(directed => directed.Arc),
         ];
 
+        return GetLines(arcs, oneSided, removed);
+    }
+
+    // Every stretch of boundary that may have only one side where the land and the zones are
+    // checked together: the zones' outer limit, beyond which are the high seas; the rim, over land
+    // or over water; the edge of each face left out; and the shores no zone lies beside.
+    private static Coordinate[][] GetOneSidedAtSea(
+        Dictionary<Arc, Coordinate[]> arcs,
+        HashSet<(double X, double Y)>? removed,
+        IEnumerable<Face> dropped,
+        IEnumerable<Arc> unbordered)
+    {
+        HashSet<Arc> oneSided =
+        [
+            .. arcs.Keys.Where(arc => arc.Kind is ArcKind.Limit or ArcKind.Rim),
+            .. unbordered,
+            .. dropped.SelectMany(face => face.Holes.Prepend(face.Shell))
+                .SelectMany(ring => ring)
+                .Select(directed => directed.Arc),
+        ];
+
+        return GetLines(arcs, oneSided, removed);
+    }
+
+    private static Coordinate[][] GetLines(
+        Dictionary<Arc, Coordinate[]> arcs,
+        IEnumerable<Arc> oneSided,
+        HashSet<(double X, double Y)>? removed)
+    {
         return
         [
             .. oneSided.Where(arcs.ContainsKey)
@@ -522,6 +567,64 @@ internal sealed class ConvertCommand : Command
                     ? arcs[arc]
                     : arcs[arc].Where(coordinate => !removed.Contains((coordinate.X, coordinate.Y))).ToArray()),
         ];
+    }
+
+    // The coasts and lake shores of the land that no zone lies beside, each counted once and named
+    // by the country whose land it bounds. Every shore was given a zone, so these are where there is
+    // no water beside the land to put one in. On this map that is 10 arcs of 97 segments: 93 of
+    // Antarctica's coast along the edge of the map at the pole, and two coast arcs of 2 segments
+    // with land on both sides, at Mukini and Burar and at Maranhao and Piaui, which GetShores takes
+    // for no shore at all. Named rather than taken on trust, since a shore a zone should have
+    // bordered and did not comes out here too: with holes placed by their first vertex, as they
+    // were, the three islets the zones covered were listed beside these.
+    private static HashSet<Arc> GetShoresWithoutZone(
+        IEnumerable<Country> land,
+        IEnumerable<Country> zones,
+        Dictionary<Arc, Coordinate[]> arcs)
+    {
+        HashSet<Arc> bordered =
+        [
+            .. zones.SelectMany(country => country.Shapes)
+                .SelectMany(shape => shape.Rings)
+                .SelectMany(ring => ring)
+                .Select(directed => directed.Arc),
+        ];
+        Dictionary<Arc, string> unbordered = [];
+        foreach (Country country in land)
+        {
+            foreach (Arc arc in country.Shapes.SelectMany(shape => shape.Rings)
+                         .SelectMany(ring => ring)
+                         .Select(directed => directed.Arc)
+                         .Where(arc => (arc.Kind is ArcKind.Coast or ArcKind.Lake) && !bordered.Contains(arc)))
+            {
+                unbordered.TryAdd(arc, country.Id);
+            }
+        }
+
+        if (unbordered.Count > 0)
+        {
+            Log.Information(
+                "{Arcs} coast and lake shore arcs of {Segments} segments have no zone beside them: {Which}.",
+                unbordered.Count,
+                unbordered.Keys.Sum(arc => arcs.TryGetValue(arc, out Coordinate[]? line) ? line.Length - 1 : 0),
+                string.Join(
+                    ", ",
+                    unbordered.GroupBy(pair => pair.Value)
+                        .Select(
+                            group => string.Create(
+                                CultureInfo.InvariantCulture,
+                                $"{group.Sum(pair => arcs.TryGetValue(pair.Key, out Coordinate[]? line) ? line.Length - 1 : 0)} of {group.Key}'s from {GetStart(arcs, group.First().Key)}"))));
+        }
+
+        return [.. unbordered.Keys];
+    }
+
+    // Where an arc starts, in the coordinates it is written in.
+    private static string GetStart(Dictionary<Arc, Coordinate[]> arcs, Arc arc)
+    {
+        return arcs.TryGetValue(arc, out Coordinate[]? line) && (line.Length > 0)
+            ? string.Create(CultureInfo.InvariantCulture, $"{line[0].X:F4}, {line[0].Y:F4}")
+            : "nowhere written";
     }
 
     // The rings a tolerance could cost their ground, each with the arcs whose floors are the only
@@ -800,6 +903,77 @@ internal sealed class ConvertCommand : Command
         }
     }
 
+    // Every coast and lake shore arc with the country whose land lies behind it, in longitude and
+    // latitude: the unitary state or the substate, asked of the faces before they are handed to
+    // the federations. An arc on the edge of a face 5i left out has no face behind it any more and
+    // is no shore of anybody's; an arc of a face taken round the rim is unprojected with the
+    // face's offset, so that a zone is measured from where the land is and not from where it was
+    // drawn.
+    //
+    // An arc with land on both sides is no shore, whatever its kind: two coast arcs on this map, 0.8
+    // units between them, have a country's face on either side, and taken for shores they claimed
+    // a land face for the sea.
+    private IEnumerable<Shore> GetShores(ArcGraph arcGraph, Envelope sourceEnvelope)
+    {
+        Dictionary<Arc, (Face Face, bool IsReversed)> behind = [];
+        HashSet<Arc> inland = [];
+        foreach (Face face in arcGraph.Faces.Where(face => face.Owner != null))
+        {
+            foreach (DirectedArc directed in face.Holes.Prepend(face.Shell)
+                         .SelectMany(ring => ring)
+                         .Where(directed => directed.Arc.Kind is ArcKind.Coast or ArcKind.Lake))
+            {
+                if (!behind.TryAdd(directed.Arc, (face, directed.IsReversed)))
+                {
+                    inland.Add(directed.Arc);
+                }
+            }
+        }
+
+        return behind.Where(pair => !inland.Contains(pair.Key)).Select(
+            pair => new Shore(
+                pair.Value.Face.Owner!,
+                pair.Key,
+                [
+                    .. pair.Key.GetFullCoordinates()
+                        .Select(
+                            coordinate => this.projectionService.Unproject(
+                                this.projectionService.Rescale(coordinate, sourceEnvelope)))
+                        .Select(
+                            coordinate => new Coordinate(coordinate.X + pair.Value.Face.LongitudeOffset, coordinate.Y)),
+                ],
+                pair.Value.Face.LongitudeOffset,
+                pair.Value.IsReversed));
+    }
+
+    // The zone boundaries back in the source map's coordinates, for the debug file and nothing
+    // else. A line is cut where it crosses the antimeridian, so that it is not drawn the width of
+    // the map back again.
+    private IEnumerable<Arc> GetZoneArcs(IEnumerable<ZoneBoundary> boundaries, Envelope sourceEnvelope)
+    {
+        ArcGraph zones = new ArcGraph(this.geometryFactory.CoordinateSequenceFactory);
+        foreach (ZoneBoundary boundary in boundaries)
+        {
+            List<Coordinate> line = [];
+            for (int index = 0; index < boundary.Coordinates.Count; ++index)
+            {
+                Coordinate coordinate = boundary.Coordinates[index];
+                if ((index > 0) && (Math.Abs(coordinate.X - boundary.Coordinates[index - 1].X) > 180.0))
+                {
+                    AddZoneArc(zones, boundary.Kind, line);
+                    line = [];
+                }
+
+                line.Add(
+                    this.projectionService.Unscale(this.projectionService.Project(coordinate), sourceEnvelope));
+            }
+
+            AddZoneArc(zones, boundary.Kind, line);
+        }
+
+        return zones.Arcs;
+    }
+
     // Every drawn element of the rim, not only the paths: the two long curves are paths but the
     // top and bottom edges are lines, and a frame missing its top and bottom is worse than none.
     private CoordinateSequence[] GetRim(SvgDocument document)
@@ -960,6 +1134,40 @@ internal sealed class ConvertCommand : Command
 
         this.faceAssignmentService.Assign(arcGraph, finest, true);
         IReadOnlyList<Face> substateDropped = this.assemblyService.Assemble(arcGraph, substates);
+
+        // Between the two assemblies, the one point at which every face carries the unitary state
+        // or the substate it belongs to, so that the zones are the substates' wherever a country is
+        // divided into them and the country's everywhere else.
+        Shore[] shores = [.. this.GetShores(arcGraph, sourceEnvelope)];
+        Log.Information(
+            "Took {Shores} shores for the economic zones: {Unitary} of unitary states and {Federal} of federal "
+            + "states.",
+            shores.Length,
+            shores.Count(shore => shore.Owner.Type == CountryType.UnitaryState),
+            shores.Count(shore => shore.Owner.Type == CountryType.FederalState));
+        IReadOnlyList<ZoneBoundary> zones = this.economicZoneService.GetBoundaries(shores, sourceEnvelope);
+        ZoneGraph water = this.economicZoneService.AddArcs(arcGraph, shores, zones, sourceEnvelope);
+
+        // In the source map's coordinates, like the land, and taken through 7b with it.
+        Country[] economicZones = [.. this.zoneAssemblyService.Assemble(water, arcGraph, shores, sourceEnvelope)];
+        if (debugSvg)
+        {
+            // Before cutting, the lines as they are found on the sphere, over land as well as
+            // water; after, the sea graph, with the shores and the rim it shares with the land graph,
+            // and the faces traced from it. The two graphs mint from one set of identifiers, so
+            // nothing in these files can be mistaken for an arc of the land.
+            await this.diagnosticsService.WriteArcsAsync(
+                    this.GetZoneArcs(zones, sourceEnvelope),
+                    rim,
+                    view,
+                    GetDebugFile(outFile, "-zones"))
+                .ConfigureAwait(false);
+            await this.diagnosticsService.WriteArcsAsync(water.Graph.Arcs, rim, view, GetDebugFile(outFile, "-water"))
+                .ConfigureAwait(false);
+            await this.diagnosticsService.WriteFacesAsync(water.Graph.Faces, view, GetDebugFile(outFile, "-sea"))
+                .ConfigureAwait(false);
+        }
+
         foreach (Face face in arcGraph.Faces)
         {
             if ((face.Owner != null) && federationOf.TryGetValue(face.Owner, out Country? federation))
@@ -995,6 +1203,20 @@ internal sealed class ConvertCommand : Command
         this.UnprojectRim(arcGraph, sourceEnvelope, unprojected);
         this.Unproject(countries, sourceEnvelope, unprojected, offsets);
 
+        // The economic zones after the land, so that what the two have in common - the shores, which
+        // are the land's own arcs - comes out of the memo as the land has it, and a coast is written
+        // with the same numbers on either side of it. The zone boundaries' own points go in as the
+        // longitude and latitude they were found at, and the rim over water at exactly 180 degrees as
+        // the rim over land does. No zone is wrapped: each was measured where its land is and
+        // projected inside the rim, so none takes an offset.
+        foreach ((Coordinate projected, Coordinate geographic) in water.Geographic)
+        {
+            unprojected.TryAdd(projected, geographic);
+        }
+
+        this.UnprojectRim(water.Graph, sourceEnvelope, unprojected);
+        this.Unproject(economicZones, sourceEnvelope, unprojected, new Dictionary<Arc, double>());
+
         // The arcs in the coordinates the output is written in. Simplification is measured
         // in the units of the tolerances, which are degrees, and taking the arcs through
         // the same memo as the shapes means an arc coordinate and the shape coordinate it
@@ -1010,6 +1232,16 @@ internal sealed class ConvertCommand : Command
                         offsets.GetValueOrDefault(arc)))
                 .ToArray());
 
+        // And the sea's own: the zone boundaries and the rim over water. The shores and the rim over
+        // land are the land's arcs and are there already, so a zone and the land beside it refer to
+        // one arc in the topology as two countries either side of a border do.
+        foreach (Arc arc in water.Graph.Arcs.Where(arc => !arcs.ContainsKey(arc)))
+        {
+            arcs.Add(
+                arc,
+                [.. arc.GetFullCoordinates().Select(coordinate => this.Unproject(coordinate, sourceEnvelope, unprojected, 0.0))]);
+        }
+
         Country[] written = countries
             .Where(country => country.Type is CountryType.UnitaryState or CountryType.FederalState)
             .ToArray();
@@ -1022,6 +1254,7 @@ internal sealed class ConvertCommand : Command
         national = this.Filter(national, keepEveryCoordinate, "the national layer");
         substates = this.Filter(substates, keepEveryCoordinate, "the substate layer");
         written = this.Filter(written, keepEveryCoordinate, "the combined output");
+        economicZones = this.Filter(economicZones, keepEveryCoordinate, "the economic zones");
 
         // After unprojecting and before writing, so that what is checked is as close to
         // what is written as it can be. Rounding to the output decimals happens as the file
@@ -1034,22 +1267,39 @@ internal sealed class ConvertCommand : Command
         this.verificationService.VerifySharing(national, GetOneSided(arcs, null, droppedNational));
         this.verificationService.VerifySharing(substates, null);
 
+        // And the land and the sea together, the partition the zones complete: every coast and lake
+        // shore is used twice now, by the land and by the zone beside it, the other way round. The
+        // unitary states and the substates, since the zones are theirs. What may have one side is
+        // the zones' outer limit, the rim, the edge of a face left out, and a shore no zone lies
+        // beside at all - see GetShoresWithoutZone. And since an island a zone has no hole for has
+        // its coast used once like any other, the two are asked whether either lies inside the
+        // other as well.
+        Face[] droppedFaces = [.. droppedNational, .. substateDropped];
+        HashSet<Arc> unbordered = GetShoresWithoutZone(written, economicZones, arcs);
+        this.verificationService.VerifySharing(
+            [.. written, .. economicZones],
+            GetOneSidedAtSea(arcs, null, droppedFaces, unbordered));
+        this.verificationService.VerifyDisjoint(written, economicZones);
+
         await WriteGeoJsonAsync(written, outFile).ConfigureAwait(false);
         await WriteGeoJsonAsync(national, GetOutFile(outFile, "-no-substates")).ConfigureAwait(false);
         await WriteGeoJsonAsync(substates, GetOutFile(outFile, "-only-substates")).ConfigureAwait(false);
+        await WriteGeoJsonAsync(economicZones, GetOutFile(outFile, "-zones")).ConfigureAwait(false);
 
-        // One topology rather than the three files the GeoJson needs, because the two layers go
-        // into it as two objects over one set of arcs. That is the whole point of the format: a
-        // national border is also the edge of a substate, and here it is one arc with two
-        // references instead of the same line written twice. It is also why out.json carries
-        // segments used three times and this does not.
+        // One topology rather than the four files the GeoJson needs, because the layers go into it
+        // as objects over one set of arcs. That is the whole point of the format: a national border
+        // is also the edge of a substate, and a coast the edge of a zone, and here each is one arc
+        // with two references instead of the same line written twice. It is also why out.json
+        // carries segments used three times and this does not.
         await this.topoJsonService.WriteAsync(
-                [("countries", national), ("substates", substates)],
+                [("countries", national), ("substates", substates), ("zones", economicZones)],
                 arcs,
                 GetTopoJsonFile(outFile, string.Empty))
             .ConfigureAwait(false);
 
-        (LinearRing Ring, DirectedArc[] Arcs)[] protectable = GetProtectable(countries);
+        // The zones' rings as well as the land's. A zone's shell runs along the coast, and a floor
+        // raised on a coast arc to keep a zone a ring keeps the land beside it the same shape.
+        (LinearRing Ring, DirectedArc[] Arcs)[] protectable = GetProtectable(countries.Concat(economicZones));
 
         // The coarse outputs are simplified by arc and not by polygon: which vertices go is
         // decided once for each arc, and then those coordinates are dropped wherever they
@@ -1079,9 +1329,13 @@ internal sealed class ConvertCommand : Command
                 CountRings(simplified),
                 CountRings(national));
             this.verificationService.VerifySharing(simplified, GetOneSided(arcs, removed, droppedNational));
-            await WriteGeoJsonAsync(
-                    this.Filter(written, removed, "the combined output"),
-                    GetOutFile(outFile, output.Suffix))
+            Country[] simplifiedWritten = this.Filter(written, removed, "the combined output");
+            await WriteGeoJsonAsync(simplifiedWritten, GetOutFile(outFile, output.Suffix)).ConfigureAwait(false);
+            Country[] simplifiedZones = this.Filter(economicZones, removed, "the economic zones");
+            this.verificationService.VerifySharing(
+                [.. simplifiedWritten, .. simplifiedZones],
+                GetOneSidedAtSea(arcs, removed, droppedFaces, unbordered));
+            await WriteGeoJsonAsync(simplifiedZones, GetOutFile(outFile, "-zones" + output.Suffix))
                 .ConfigureAwait(false);
 
             // The same rings over shorter arcs. Which vertices went was decided once per arc, so
@@ -1091,6 +1345,7 @@ internal sealed class ConvertCommand : Command
                     [
                         ("countries", simplified),
                         ("substates", simplifiedSubstates),
+                        ("zones", simplifiedZones),
                     ],
                     arcs.ToDictionary(
                         pair => pair.Key,

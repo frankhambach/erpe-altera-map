@@ -22,4 +22,12 @@ public enum ArcKind
     // rim and the part beyond it. The one kind of arc 7a never dissolves, since once the far
     // part is wrapped the two sides of it are 360 degrees apart.
     Rim,
+
+    // The line between two countries' economic zones, every point of it as far from the shore of
+    // one as from the shore of the other. Not drawn but computed, on the sphere.
+    Median,
+
+    // The outer edge of an economic zone, 200 nautical miles from the nearest shore, beyond which
+    // the water belongs to nobody.
+    Limit,
 }

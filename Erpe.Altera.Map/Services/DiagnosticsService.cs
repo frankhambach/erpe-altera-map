@@ -42,6 +42,10 @@ public sealed class DiagnosticsService : IDiagnosticsService
 
     private const string LakeColour = "#00acc1";
 
+    private const string LimitColour = "#2e7d32";
+
+    private const string MedianColour = "#6a1b9a";
+
     private const string NodeColour = "#000000";
 
     // The projection's own frame, drawn under everything else and in a grey that stays out of
@@ -195,6 +199,8 @@ public sealed class DiagnosticsService : IDiagnosticsService
             (ArcKind.Substate, "substates"),
             (ArcKind.Border, "borders"),
             (ArcKind.Rim, "rim"),
+            (ArcKind.Limit, "limits"),
+            (ArcKind.Median, "medians"),
         ];
 
         List<string> lines = [];
@@ -317,6 +323,8 @@ public sealed class DiagnosticsService : IDiagnosticsService
                 ArcKind.Coast => CoastColour,
                 ArcKind.Lake => LakeColour,
                 ArcKind.Rim => RimColour,
+                ArcKind.Limit => LimitColour,
+                ArcKind.Median => MedianColour,
                 _ => NodeColour,
             };
     }

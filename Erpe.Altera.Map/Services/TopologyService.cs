@@ -15,6 +15,7 @@ using Erpe.Altera.Map.Models;
 using NetTopologySuite.Algorithm;
 using NetTopologySuite.Algorithm.Distance;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Prepared;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.Polygonize;
 using NetTopologySuite.Simplify;
@@ -263,6 +264,26 @@ public sealed class TopologyService : ITopologyService
         return [.. sets.Select(faces => DissolveOneSet(faces, outgoing, positions))];
     }
 
+    public int TraceFaces(ArcGraph arcGraph)
+    {
+        ArgumentNullException.ThrowIfNull(arcGraph);
+
+        List<(DirectedArc[] Ring, double SignedArea)> rings = TraceRings(arcGraph);
+        int traced = rings.Sum(ring => ring.Ring.Length);
+        if (traced != (arcGraph.Arcs.Count * 2))
+        {
+            Log.Warning(
+                "Traced {Traced} half-edges into rings but the graph has {Expected}; the faces do not tile.",
+                traced,
+                arcGraph.Arcs.Count * 2);
+        }
+
+        return this.AddFaces(
+            arcGraph,
+            [.. rings.Where(ring => ring.SignedArea > 0.0)],
+            [.. rings.Where(ring => ring.SignedArea <= 0.0)]);
+    }
+
     public LinearRing Close(CoordinateSequence coordinateSequence)
     {
         ArgumentNullException.ThrowIfNull(coordinateSequence);
@@ -376,9 +397,7 @@ public sealed class TopologyService : ITopologyService
     // crosses land does it divide anything. Over water it would be a line through the ocean
     // joining islands the map does not join, and 5f would walk out along it and back. With every
     // crossing a node, each stretch lies wholly over land or wholly over water, and one point of
-    // it says which: a ray from it crosses the coast and the lake shores an odd number of times
-    // from land and an even number from water, a lake counting as water. Even-odd rather than
-    // nesting, because it needs nothing but the shore lines, and they are closed by now.
+    // it says which, asked of the shore lines by ShoreIndex.
     private static (int OverWater, int OverLand) RemoveRimOverWater(ArcGraph arcGraph)
     {
         Arc[] rim = [.. arcGraph.Arcs.Where(arc => arc.Kind == ArcKind.Rim)];
@@ -387,18 +406,7 @@ public sealed class TopologyService : ITopologyService
             return (0, 0);
         }
 
-        STRtree<(Coordinate Start, Coordinate End)> shore = new STRtree<(Coordinate Start, Coordinate End)>();
-        double maximumX = double.NegativeInfinity;
-        foreach (Arc arc in arcGraph.Arcs.Where(arc => arc.Kind is ArcKind.Coast or ArcKind.Lake))
-        {
-            Coordinate[] coordinates = arc.GetFullCoordinates();
-            for (int i = 0; i < (coordinates.Length - 1); ++i)
-            {
-                shore.Insert(new Envelope(coordinates[i], coordinates[i + 1]), (coordinates[i], coordinates[i + 1]));
-                maximumX = Math.Max(maximumX, Math.Max(coordinates[i].X, coordinates[i + 1].X));
-            }
-        }
-
+        ShoreIndex shore = new ShoreIndex(arcGraph.Arcs);
         int overWater = 0;
         foreach (Arc arc in rim)
         {
@@ -407,11 +415,7 @@ public sealed class TopologyService : ITopologyService
             Coordinate point = new Coordinate(
                 (coordinates[middle].X + coordinates[middle + 1].X) / 2.0,
                 (coordinates[middle].Y + coordinates[middle + 1].Y) / 2.0);
-            int crossings = point.X >= maximumX
-                ? 0
-                : shore.Query(new Envelope(point.X, maximumX, point.Y, point.Y))
-                    .Count(segment => IsCrossedByRay(segment, point));
-            if ((crossings % 2) == 0)
+            if (shore.IsOverWater(point))
             {
                 arcGraph.Arcs.Remove(arc);
                 ++overWater;
@@ -419,19 +423,6 @@ public sealed class TopologyService : ITopologyService
         }
 
         return (overWater, rim.Length - overWater);
-    }
-
-    // Whether a ray from the point towards increasing x crosses the segment. Half-open in y, so
-    // that a ray through a vertex counts it for one of the two segments meeting there, not both.
-    private static bool IsCrossedByRay((Coordinate Start, Coordinate End) segment, Coordinate point)
-    {
-        (Coordinate start, Coordinate end) = segment;
-        if ((start.Y > point.Y) == (end.Y > point.Y))
-        {
-            return false;
-        }
-
-        return (start.X + (((point.Y - start.Y) / (end.Y - start.Y)) * (end.X - start.X))) > point.X;
     }
 
     // An arc that reads the same forwards as backwards is one line drawn twice inside a single
@@ -1161,6 +1152,65 @@ public sealed class TopologyService : ITopologyService
         return directed.EndNode;
     }
 
+    // The smallest shell that encloses an outline, or -1, asked of the outline's vertices. Any
+    // vertex will do for an outline that touches nothing, and the first is asked first. But an
+    // outline can touch the shell around it at a vertex, where an islet is drawn with its node on
+    // the coast beside it, and that vertex is on the shell and not inside it: asked of it alone, the
+    // islet was enclosed by nothing. In the sea the zones round two islets took no hole for them,
+    // Qulalliq's and one of Magallanica's. So a vertex on the boundary of a shell it is not inside
+    // says nothing, and the next is asked.
+    //
+    // Not where the shell is the land the outline bounds, which it touches all along and never
+    // encloses. A shell enclosing an outline never shares an arc with it, since the two would then
+    // be one ring. And vertices rather than points between them: a point worked out in floating
+    // point lies a hair to one side of its segment, and asking of the middle of the first segment
+    // instead put 74% of the land in no face, every outline a hole of the land inside it.
+    private static int FindEnclosing(
+        GeometryFactory geometryFactory,
+        DirectedArc[] ring,
+        (DirectedArc[] Ring, double SignedArea)[] shells,
+        Polygon[] polygons,
+        STRtree<int> index,
+        IPreparedGeometry?[] prepared,
+        HashSet<Arc>?[] shellArcs)
+    {
+        HashSet<Arc> own = [.. ring.Select(directed => directed.Arc)];
+        foreach (Coordinate vertex in ring.SelectMany(GetCoordinates))
+        {
+            Point test = geometryFactory.CreatePoint(vertex);
+            int best = -1;
+            bool isTouching = false;
+            foreach (int i in index.Query(new Envelope(vertex)))
+            {
+                shellArcs[i] ??= [.. shells[i].Ring.Select(directed => directed.Arc)];
+                if (shellArcs[i]!.Overlaps(own))
+                {
+                    continue;
+                }
+
+                prepared[i] ??= PreparedGeometryFactory.Prepare(polygons[i]);
+                if (prepared[i]!.Contains(test))
+                {
+                    if ((best < 0) || (shells[i].SignedArea < shells[best].SignedArea))
+                    {
+                        best = i;
+                    }
+                }
+                else if (prepared[i]!.Covers(test))
+                {
+                    isTouching = true;
+                }
+            }
+
+            if (!isTouching)
+            {
+                return best;
+            }
+        }
+
+        return -1;
+    }
+
     private static double GetSignedArea(IEnumerable<DirectedArc> ring)
     {
         double area = 0.0;
@@ -1357,6 +1407,12 @@ public sealed class TopologyService : ITopologyService
         }
 
         List<DirectedArc[]>[] holes = [.. shells.Select(_ => new List<DirectedArc[]>())];
+
+        // Prepared, and only when first asked, because the faces of the sea are what this is slow
+        // on: a stretch of high seas is a polygon of hundreds of thousands of points with thousands
+        // of islands to place, and Contains walks every point each time. The answers are the same.
+        IPreparedGeometry?[] prepared = new IPreparedGeometry?[shells.Length];
+        HashSet<Arc>?[] shellArcs = new HashSet<Arc>?[shells.Length];
         int unenclosed = 0;
         foreach ((DirectedArc[] ring, double _) in outlines)
         {
@@ -1365,17 +1421,7 @@ public sealed class TopologyService : ITopologyService
             // shell as enclosing its own outline and no island would ever reach the ocean.
             // Contains excludes that, while still holding for a lake outline lying inside
             // the island around it.
-            Coordinate point = GetCoordinates(ring[0])[0];
-            Point test = this.geometryFactory.CreatePoint(point);
-            int best = -1;
-            foreach (int i in index.Query(new Envelope(point)))
-            {
-                if (polygons[i].Contains(test) && ((best < 0) || (shells[i].SignedArea < shells[best].SignedArea)))
-                {
-                    best = i;
-                }
-            }
-
+            int best = FindEnclosing(this.geometryFactory, ring, shells, polygons, index, prepared, shellArcs);
             if (best < 0)
             {
                 ++unenclosed;
