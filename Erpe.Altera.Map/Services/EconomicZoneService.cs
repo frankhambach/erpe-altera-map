@@ -355,8 +355,8 @@ public sealed class EconomicZoneService : IEconomicZoneService
         (int onRim, int elsewhere) = CountDangling(water, antimeridian);
         Log.Information(
             "{Crossings} crossings left between the zone arcs and the shore or each other; {OnRim} zone arc ends on "
-            + "the antimeridian wait for the rim, and {Elsewhere} meet nothing; {Grazing} segments touch the shore with "
-            + "water at either end.",
+            + "the antimeridian wait for the rim, and {Elsewhere} meet nothing; {Grazing} segments crossing the shore "
+            + "with water at either end cut there.",
             crossings,
             onRim,
             elsewhere,
@@ -562,7 +562,7 @@ public sealed class EconomicZoneService : IEconomicZoneService
     // island or a lake with nothing else on its shore, and its node is sampled like any other
     // point. Every shore gets one sample at least and every island three, however short, so that
     // no islet goes without a zone. And more samples near either end of an open arc, ever closer
-    // to the node: see NodeOffset.
+    // to the node, and at the shore's corners there: see NodeOffset and GetCornerOffsets.
     //
     // Measured along the sphere, but placed on the shore as it is drawn: on the straight segment
     // between two of the source map's points, and then unprojected. The land the zones are cut back
@@ -592,10 +592,16 @@ public sealed class EconomicZoneService : IEconomicZoneService
 
             if (!isClosed)
             {
-                foreach (double offset in GetOffsets(line.Length / count))
+                double step = line.Length / count;
+                double[] offsets = [.. GetOffsets(step)];
+                foreach (double offset in offsets.Concat(GetCornerOffsets(line.GetCorners(false, step), offsets)))
                 {
                     (SphereVector start, double fromStart) = line.LocateFromStart(offset);
                     samples.Add(start, line.Label, shore, fromStart);
+                }
+
+                foreach (double offset in offsets.Concat(GetCornerOffsets(line.GetCorners(true, step), offsets)))
+                {
                     (SphereVector end, double fromEnd) = line.LocateFromEnd(offset);
                     samples.Add(end, line.Label, shore, fromEnd);
                 }
@@ -605,6 +611,29 @@ public sealed class EconomicZoneService : IEconomicZoneService
         }
 
         return total * EarthRadius;
+    }
+
+    // The distances from a node at which the samples near it are put besides the doubling: one at
+    // every corner of the shore within the doubling's reach, as far from the node as the corner is.
+    //
+    // Near a node the median line runs a few metres off the shore, and the doubling samples are as
+    // far apart as they are from the node. Between two of them the shore is taken to be straight,
+    // which it is not where it turns a corner: at Monache and Wintun the lake shore leaves the node
+    // eastward for 270 m and then turns south, the corner falls between the samples at 256 and 512
+    // m, and the median came up the lake and cut across it 2.6 m inside the land, crossing the shore
+    // twice with water at both ends. With a sample at the corner the shore between samples is
+    // straight, and the median cannot cut it.
+    //
+    // Only the shore's own corners. Putting every corner of every shore at a node on all of them, so
+    // that the samples would still come in pairs the same distance from it, was tried and is worse:
+    // the crossings went from 2 to 7, among them two stretches of limit off Antarctica, and the
+    // median ends left loose from 9 to 14. Nor within a tenth of a doubling sample's distance, where
+    // a corner adds two samples on top of each other and nothing the doubling did not have.
+    private static IEnumerable<double> GetCornerOffsets(IEnumerable<double> corners, double[] offsets)
+    {
+        return corners.Where(corner => corner > 0.0)
+            .Distinct()
+            .Where(corner => !Array.Exists(offsets, offset => Math.Abs(offset - corner) <= (offset * 0.1)));
     }
 
     // The refinement: the stretches of shore where two countries' samples come closer to each
@@ -1350,7 +1379,7 @@ public sealed class EconomicZoneService : IEconomicZoneService
             bool any = false;
             foreach (Coordinate[] line in lines.Where(line => line.Length >= 2))
             {
-                bool[] wet = this.Classify(line);
+                (bool[] wet, bool[] grazed) = this.Classify(line);
                 int index = 0;
                 while (index < line.Length)
                 {
@@ -1360,8 +1389,8 @@ public sealed class EconomicZoneService : IEconomicZoneService
                         continue;
                     }
 
-                    int first = index;
-                    while ((index < line.Length) && wet[index])
+                    int first = index++;
+                    while ((index < line.Length) && wet[index] && !grazed[index])
                     {
                         ++index;
                     }
@@ -1466,9 +1495,16 @@ public sealed class EconomicZoneService : IEconomicZoneService
             return (this.GetEnd(inside), loose);
         }
 
-        private bool[] Classify(Coordinate[] line)
+        // Which points of the line lie over water, and which segments - each marked at the point it
+        // ends at - cross the shore with water at both ends. Such a segment has passed over land on
+        // the way, across a corner of the shore, and the run of water is cut there: at Orlamsquab and
+        // Natalia, where the two coasts leave their node 2 cm apart and one of them zigzags back on
+        // itself, the median's last segment cut across the zigzag twice and was joined to the node
+        // through the land.
+        private (bool[] Wet, bool[] Grazed) Classify(Coordinate[] line)
         {
             bool[] wet = new bool[line.Length];
+            bool[] grazed = new bool[line.Length];
             wet[0] = shore.IsOverWater(line[0]);
             ++this.Tested;
             for (int index = 1; index < line.Length; ++index)
@@ -1483,11 +1519,12 @@ public sealed class EconomicZoneService : IEconomicZoneService
                 ++this.Tested;
                 if (wet[index] && wet[index - 1])
                 {
+                    grazed[index] = true;
                     ++this.Grazing;
                 }
             }
 
-            return wet;
+            return (wet, grazed);
         }
 
         private Node GetEnd(Coordinate coordinate)
@@ -1588,6 +1625,24 @@ public sealed class EconomicZoneService : IEconomicZoneService
             }
 
             return distance;
+        }
+
+        // How far each vertex of the shore lies from the node the shore leaves, in a straight line,
+        // for the vertices less than the limit along it from that node.
+        public IEnumerable<double> GetCorners(bool fromEnd, double limit)
+        {
+            SphereVector node = fromEnd ? this.line[^1] : this.line[0];
+            for (int step = 1; step < (this.line.Length - 1); ++step)
+            {
+                int index = fromEnd ? this.line.Length - 1 - step : step;
+                double along = fromEnd ? this.Length - this.cumulative[index] : this.cumulative[index];
+                if (along >= limit)
+                {
+                    yield break;
+                }
+
+                yield return node.AngleTo(this.line[index]);
+            }
         }
 
         // How far along the shore a point is from each of its two nodes.
